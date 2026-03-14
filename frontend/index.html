@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AICERT by DevReady</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-wrap">
+        <div class="brand-pill">DevReady</div>
+        <h1>AICERT</h1>
+        <p>Professional AI certification for real-world engineers and solution architects.</p>
+      </div>
+      <div class="topbar-right">
+        <div id="userBadge" class="user-badge hidden"></div>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <section class="hero-card">
+        <div class="hero-copy">
+          <div class="eyebrow">Level up your verified AI capability</div>
+          <h2>Business. Functional. Technical. Measured in one platform.</h2>
+          <p>
+            AICERT validates practical AI skill across architecture, engineering,
+            cloud, models, coding, governance, and solution design.
+          </p>
+          <div class="hero-points">
+            <span>10 levels</span>
+            <span>2 certification tracks</span>
+            <span>20 MCQs + written sections</span>
+            <span>Immediate certification outcome</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="auth-card card" id="authCard">
+        <div class="card-header">
+          <h3>Login or Register</h3>
+          <p>Candidate entry point.</p>
+        </div>
+
+        <div id="messageBox" class="message-box hidden"></div>
+
+        <div class="auth-grid">
+          <div class="auth-panel">
+            <h4>Create account</h4>
+            <div class="form-group">
+              <label for="registerName">Full name</label>
+              <input id="registerName" type="text" placeholder="Your full name" />
+            </div>
+            <div class="form-group">
+              <label for="registerEmail">Email</label>
+              <input id="registerEmail" type="email" placeholder="name@email.com" />
+            </div>
+            <div class="form-group">
+              <label for="registerPassword">Password</label>
+              <input id="registerPassword" type="password" placeholder="Create password" />
+            </div>
+            <button id="registerBtn" class="btn btn-primary">Create Account</button>
+          </div>
+
+          <div class="auth-panel">
+            <h4>Login</h4>
+            <div class="form-group">
+              <label for="loginEmail">Email</label>
+              <input id="loginEmail" type="email" placeholder="name@email.com" />
+            </div>
+            <div class="form-group">
+              <label for="loginPassword">Password</label>
+              <input id="loginPassword" type="password" placeholder="Enter password" />
+            </div>
+            <button id="loginBtn" class="btn btn-secondary">Login</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="dashboard card hidden" id="dashboardSection">
+        <div class="card-header">
+          <h3>Candidate Dashboard</h3>
+          <p>Select your track and level, then launch your test.</p>
+        </div>
+
+        <div class="dashboard-grid">
+          <div class="form-group">
+            <label for="trackSelect">Track</label>
+            <select id="trackSelect"></select>
+          </div>
+
+          <div class="form-group">
+            <label for="levelSelect">Level</label>
+            <select id="levelSelect"></select>
+          </div>
+
+          <div class="form-group form-action">
+            <label>&nbsp;</label>
+            <button id="startExamBtn" class="btn btn-primary">Start Test</button>
+          </div>
+        </div>
+
+        <div class="subtle-note">
+          Weighting: 40% MCQ, 30% Essay, 30% Scenario.
+        </div>
+
+        <div id="myAttemptsSection" class="attempts-wrap"></div>
+      </section>
+
+      <section class="exam-section card hidden" id="examSection">
+        <div class="exam-header">
+          <div>
+            <div class="eyebrow">Live exam</div>
+            <h3 id="examTitle">Test</h3>
+          </div>
+          <div class="timer-box">
+            <span>Time Remaining</span>
+            <strong id="timerDisplay">60:00</strong>
+          </div>
+        </div>
+
+        <div id="mcqSection">
+          <div class="section-banner">
+            <strong>Part 1: Multiple Choice</strong>
+            <span>20 questions across Business, Functional, and Technical areas.</span>
+          </div>
+          <div id="questionsContainer" class="questions-container"></div>
+        </div>
+
+        <div id="essaySection" class="written-section">
+          <div class="section-banner">
+            <strong>Part 2: Essay</strong>
+            <span>Worth 30% of total score.</span>
+          </div>
+          <div class="prompt-box">
+            <h4>Essay Prompt</h4>
+            <p id="essayPromptText"></p>
+          </div>
+          <div class="form-group">
+            <label for="essayResponse">Your response</label>
+            <textarea id="essayResponse" class="big-textarea" rows="14" placeholder="Write your response here..."></textarea>
+          </div>
+        </div>
+
+        <div id="scenarioSection" class="written-section">
+          <div class="section-banner">
+            <strong>Part 3: Scenario Response</strong>
+            <span>Worth 30% of total score.</span>
+          </div>
+          <div class="prompt-box">
+            <h4>Scenario Prompt</h4>
+            <p id="scenarioPromptText"></p>
+          </div>
+          <div class="form-group">
+            <label for="scenarioResponse">Your response</label>
+            <textarea id="scenarioResponse" class="big-textarea" rows="14" placeholder="Explain how AI would solve the scenario..."></textarea>
+          </div>
+        </div>
+
+        <div class="exam-actions">
+          <button id="submitExamBtn" class="btn btn-primary">Submit Test</button>
+        </div>
+      </section>
+
+      <section class="result-section card hidden" id="resultSection">
+        <div class="card-header">
+          <h3>Result</h3>
+          <p>Your certification outcome appears here.</p>
+        </div>
+
+        <div class="result-grid">
+          <div class="metric">
+            <span>Track</span>
+            <strong id="resultTrack">—</strong>
+          </div>
+          <div class="metric">
+            <span>Attempted Level</span>
+            <strong id="resultAttemptedLevel">—</strong>
+          </div>
+          <div class="metric">
+            <span>Final Score</span>
+            <strong id="resultScore">—</strong>
+          </div>
+          <div class="metric">
+            <span>Achieved Level</span>
+            <strong id="resultAchievedLevel">—</strong>
+          </div>
+        </div>
+
+        <div class="result-grid">
+          <div class="metric">
+            <span>MCQ</span>
+            <strong id="resultMcq">—</strong>
+          </div>
+          <div class="metric">
+            <span>Essay</span>
+            <strong id="resultEssay">—</strong>
+          </div>
+          <div class="metric">
+            <span>Scenario</span>
+            <strong id="resultScenario">—</strong>
+          </div>
+          <div class="metric">
+            <span>Status</span>
+            <strong id="resultStatus">—</strong>
+          </div>
+        </div>
+
+        <div id="resultMessage" class="result-message"></div>
+
+        <div class="result-actions">
+          <a id="certificateLink" class="btn btn-secondary hidden" target="_blank">View Certificate</a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

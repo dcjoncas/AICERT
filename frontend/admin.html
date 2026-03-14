@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AICERT Admin</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+    <div class="page-shell">
+        <header class="topbar">
+            <div class="brand-wrap">
+                <div class="brand-pill">DevReady Admin</div>
+                <h1>AICERT Admin Panel</h1>
+                <p>Live monitoring of candidate exams, progress, correct answers, and retake control.</p>
+            </div>
+        </header>
+
+        <main class="main-grid">
+            <section class="card" id="adminAuth">
+                <div class="card-header">
+                    <h3>Admin Login</h3>
+                    <p>Only emails listed in AICERT_ADMIN_EMAILS can enter.</p>
+                </div>
+
+                <div id="adminMessage" class="message-box hidden"></div>
+
+                <div class="auth-grid" style="grid-template-columns: 1fr;">
+                    <div class="auth-panel">
+                        <div class="form-group">
+                            <label for="adminEmail">Email</label>
+                            <input id="adminEmail" type="email" placeholder="admin@email.com" />
+                        </div>
+                        <div class="form-group">
+                            <label for="adminPassword">Password</label>
+                            <input id="adminPassword" type="password" placeholder="Enter password" />
+                        </div>
+                        <button id="adminLoginBtn" class="btn btn-primary">Login to Admin</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card hidden" id="adminPanel">
+                <div class="card-header">
+                    <h3>Live Exam Monitoring</h3>
+                    <p>Every attempt shows its unique test title, current progress, and answer key.</p>
+                </div>
+
+                <div class="exam-actions" style="margin-bottom:16px;">
+                    <button class="btn btn-secondary" onclick="loadLiveAdmin()">Refresh Live View</button>
+                    <button class="btn btn-secondary" onclick="clearAICERTAdminState()">Logout Admin</button>
+                </div>
+
+                <div id="adminAttemptCards" class="attempt-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/admin.js"></script>
+</body>
+
+</html>
