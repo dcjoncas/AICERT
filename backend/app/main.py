@@ -1,746 +1,239 @@
-import json
-import os
-import random
+import json, os, random, urllib.request
 from datetime import datetime
 from pathlib import Path
-
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-
-from .auth import hash_password, verify_password
 from .database import Base, SessionLocal, engine
-from .models import Certificate, ExamAnswer, ExamAttempt, Question, User
-from .schemas import (
-    AnswerSubmission,
-    LoginRequest,
-    RegisterRequest,
-    StartExamRequest,
-    SubmitExamRequest,
-)
+from .models import User, Question, ExamAttempt, ExamAnswer, Certificate
+from .auth import hash_password, verify_password
+from .schemas import RegisterRequest, LoginRequest, StartExamRequest, SubmitExamRequest, RetakeRequest
 from .seed import build_questions
 
-app = FastAPI(title="AICERT API", version="3.2.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app = FastAPI(title="AICERT API", version="1.3.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 Base.metadata.create_all(bind=engine)
-
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = BACKEND_DIR.parent
 FRONTEND_DIR = PROJECT_DIR / "frontend"
 RESULTS_DIR = BACKEND_DIR / "results"
-
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
-
-
-def get_db() -> Session:
-    return SessionLocal()
-
-
-def admin_emails() -> set[str]:
-    raw = os.getenv("AICERT_ADMIN_EMAILS", "")
-    return {email.strip().lower() for email in raw.split(",") if email.strip()}
-
-
-def is_admin_user(user: User) -> bool:
-    if getattr(user, "is_admin", False):
-        return True
-    return user.email.lower() in admin_emails()
-
-
-def generate_exam_name(track: str, level: int) -> str:
-    first_words = [
-        "Running",
-        "Charging",
-        "Flying",
-        "Roaring",
-        "Leaping",
-        "Blazing",
-        "Hunting",
-        "Shadow",
-        "Iron",
-        "Silver",
-        "Crimson",
-        "Storm",
-    ]
-    animals = [
-        "Bear",
-        "Wolf",
-        "Falcon",
-        "Panther",
-        "Fox",
-        "Raven",
-        "Tiger",
-        "Stallion",
-        "Viper",
-        "Hawk",
-        "Bison",
-        "Jaguar",
-    ]
-    suffixes = [
-        "Challenge",
-        "Launch",
-        "Sprint",
-        "Run",
-        "Trial",
-        "Quest",
-        "Drill",
-        "Circuit",
-    ]
-    return f"{random.choice(first_words)} {random.choice(animals)} {random.choice(suffixes)} - {track} L{level}"
-
-
-def section_sort_key(section_name: str) -> int:
-    order = {"business": 1, "functional": 2, "technical": 3}
-    return order.get((section_name or "").lower(), 99)
-
-
-def write_result_file(payload: dict) -> None:
-    attempt_id = payload.get("attempt_id", "unknown")
-    file_path = RESULTS_DIR / f"attempt_{attempt_id}.json"
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-
-
+if FRONTEND_DIR.exists(): app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+def dbs(): return SessionLocal()
+def admin_emails():
+    raw = os.getenv("AICERT_ADMIN_EMAILS","")
+    return {x.strip().lower() for x in raw.split(",") if x.strip()}
+def is_admin(user): return bool(getattr(user, "is_admin", False) or user.email.lower() in admin_emails())
+def section_sort_key(s): return {"business":1,"functional":2,"technical":3}.get((s or "").lower(),99)
+def exam_name(track, level): return f"{random.choice(['Running','Charging','Flying','Roaring','Leaping','Storm'])} {random.choice(['Bear','Wolf','Falcon','Panther','Fox','Jaguar'])} {random.choice(['Challenge','Launch','Sprint','Quest'])} - {track} L{level}"
+def result_file(payload): (RESULTS_DIR / f"attempt_{payload.get('attempt_id','unknown')}.json").write_text(json.dumps(payload, indent=2), encoding='utf-8')
+def parse_json(v):
+    if not v: return None
+    try: return json.loads(v)
+    except: return {"summary": v}
+def ai_grade(kind, track, level, prompt_text, response_text):
+    key = os.getenv("OPENAI_API_KEY","").strip()
+    if key:
+        prompt = f"Return ONLY JSON with keys: percent, summary, why, strengths, weaknesses, business_assessment, functional_assessment, technical_assessment, creativity, clarity. Kind:{kind} Track:{track} Level:{level} Prompt:{prompt_text} Response:{response_text}"
+        body = {"model":"gpt-4.1-mini","input":prompt}
+        req = urllib.request.Request("https://api.openai.com/v1/responses", data=json.dumps(body).encode(), headers={"Content-Type":"application/json","Authorization":f"Bearer {key}"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                payload = json.loads(resp.read().decode())
+            txt = ""
+            for item in payload.get("output",[]):
+                for c in item.get("content",[]):
+                    if c.get("type")=="output_text": txt += c.get("text","")
+            if txt.strip(): return json.loads(txt.strip())
+        except Exception:
+            pass
+    txt = (response_text or "").lower(); words = len(txt.split()); score = 20 + (20 if words>150 else 0) + (15 if words>300 else 0) + (10 if words>500 else 0)
+    for kw in ["business","functional","technical","architecture","security","governance","api","cloud","model","workflow","integration","testing"]:
+        if kw in txt: score += 2
+    score = min(92, score)
+    return {"percent":score,"summary":f"{kind.title()} response scored with fallback analysis.","why":"Based on depth, coverage, and breadth across business, functional, and technical dimensions.","strengths":["Response length and detail were considered.","Relevant AI and delivery concepts were identified where present."],"weaknesses":["Fallback scoring is less precise than AI-assisted evaluation.","The response may need stronger evidence, structure, and implementation detail."],"business_assessment":"Business framing was evaluated based on value, governance, and organizational impact signals.","functional_assessment":"Functional assessment looked for workflow thinking, users, handoffs, and exception handling.","technical_assessment":"Technical assessment looked for architecture, security, APIs, models, and implementation ideas.","creativity":"Creativity was inferred from originality and solution framing.","clarity":"Clarity was inferred from structure, readability, and completeness."}
+def attempt_questions(db, a):
+    qs = db.query(Question).filter(Question.track==a.track, Question.level==a.attempted_level, Question.active==True).all()
+    return sorted(qs, key=lambda q:(section_sort_key(q.section), q.id))[:a.total_questions]
+def review_rows(db, a):
+    qs = attempt_questions(db,a); ans = {x.question_id:x for x in db.query(ExamAnswer).filter(ExamAnswer.attempt_id==a.id).all()}; rows=[]
+    for idx,q in enumerate(qs,1):
+        sel = ans.get(q.id)
+        rows.append({"index":idx,"question_id":q.id,"question_code":q.question_code,"section":q.section,"question_text":q.question_text,"option_a":q.option_a,"option_b":q.option_b,"option_c":q.option_c,"option_d":q.option_d,"selected_option":sel.selected_option if sel else "","correct_option":q.correct_option,"is_correct":sel.is_correct if sel else False})
+    return rows
 @app.on_event("startup")
-def startup_seed():
-    db = get_db()
+def startup():
+    db = dbs()
     try:
-        existing = db.query(Question).count()
-        if existing == 0:
-            for q in build_questions():
-                db.add(q)
+        if db.query(Question).count()==0:
+            for q in build_questions(): db.add(q)
             db.commit()
-    finally:
-        db.close()
-
-
+    finally: db.close()
 @app.get("/", include_in_schema=False)
-def candidate_root():
-    index_file = FRONTEND_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(str(index_file))
-    return JSONResponse({"message": "Candidate app not found"}, status_code=404)
-
-
+def root():
+    f = FRONTEND_DIR / "index.html"
+    return FileResponse(str(f)) if f.exists() else JSONResponse({"message":"Candidate app not found"}, status_code=404)
 @app.get("/admin", include_in_schema=False)
-def admin_root():
-    admin_file = FRONTEND_DIR / "admin.html"
-    if admin_file.exists():
-        return FileResponse(str(admin_file))
-    return JSONResponse({"message": "Admin app not found"}, status_code=404)
-
-
+def admin_page():
+    f = FRONTEND_DIR / "admin.html"
+    return FileResponse(str(f)) if f.exists() else JSONResponse({"message":"Admin app not found"}, status_code=404)
+@app.get("/results", include_in_schema=False)
+def results_page():
+    f = FRONTEND_DIR / "results.html"
+    return FileResponse(str(f)) if f.exists() else JSONResponse({"message":"Results page not found"}, status_code=404)
 @app.post("/api/register")
 def register(payload: RegisterRequest):
-    db = get_db()
+    db = dbs()
     try:
-        existing = db.query(User).filter(User.email == payload.email).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="Email already registered")
-
-        user = User(
-            full_name=payload.full_name,
-            email=payload.email,
-            password_hash=hash_password(payload.password),
-            is_admin=payload.email.lower() in admin_emails(),
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-
-        return {
-            "message": "User registered successfully",
-            "user": {
-                "id": user.id,
-                "full_name": user.full_name,
-                "email": user.email,
-                "is_admin": is_admin_user(user),
-            },
-        }
-    finally:
-        db.close()
-
-
+        if db.query(User).filter(User.email==payload.email).first(): raise HTTPException(status_code=400, detail="Email already registered")
+        u = User(full_name=payload.full_name, email=payload.email, password_hash=hash_password(payload.password), is_admin=payload.email.lower() in admin_emails())
+        db.add(u); db.commit(); db.refresh(u)
+        return {"message":"User registered successfully","user":{"id":u.id,"full_name":u.full_name,"email":u.email,"is_admin":is_admin(u)}}
+    finally: db.close()
 @app.post("/api/login")
 def login(payload: LoginRequest):
-    db = get_db()
+    db = dbs()
     try:
-        user = db.query(User).filter(User.email == payload.email).first()
-        if not user or not verify_password(payload.password, user.password_hash):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-
-        return {
-            "message": "Login successful",
-            "user": {
-                "id": user.id,
-                "full_name": user.full_name,
-                "email": user.email,
-                "is_admin": is_admin_user(user),
-            },
-        }
-    finally:
-        db.close()
-
-
+        u = db.query(User).filter(User.email==payload.email).first()
+        if not u or not verify_password(payload.password, u.password_hash): raise HTTPException(status_code=401, detail="Invalid email or password")
+        return {"message":"Login successful","user":{"id":u.id,"full_name":u.full_name,"email":u.email,"is_admin":is_admin(u)}}
+    finally: db.close()
 @app.get("/api/tracks")
-def get_tracks():
-    return {
-        "tracks": [
-            {"id": "AI Engineer", "name": "AI Engineer"},
-            {"id": "AI Solution Architect", "name": "AI Solution Architect"},
-        ]
-    }
-
-
+def tracks(): return {"tracks":[{"id":"AI Engineer","name":"AI Engineer"},{"id":"AI Solution Architect","name":"AI Solution Architect"}]}
 @app.get("/api/levels")
-def get_levels():
-    return {"levels": [{"level": i, "label": f"Test Level {i}"} for i in range(1, 11)]}
-
-
+def levels(): return {"levels":[{"level":i,"label":f"Test Level {i}"} for i in range(1,11)]}
 @app.get("/api/my-attempts")
-def my_attempts(user_id: int = Query(...)):
-    db = get_db()
+def my_attempts(user_id:int=Query(...)):
+    db = dbs()
     try:
-        attempts = (
-            db.query(ExamAttempt)
-            .filter(ExamAttempt.user_id == user_id)
-            .order_by(ExamAttempt.id.desc())
-            .all()
-        )
-
-        return {
-            "attempts": [
-                {
-                    "id": a.id,
-                    "exam_name": a.exam_name,
-                    "track": a.track,
-                    "attempted_level": a.attempted_level,
-                    "status": a.status,
-                    "current_index": a.current_index,
-                    "total_questions": a.total_questions,
-                    "percent_score": a.percent_score,
-                    "achieved_level": a.achieved_level,
-                    "passed": a.passed,
-                    "started_at": a.started_at.isoformat() if a.started_at else None,
-                    "submitted_at": a.submitted_at.isoformat() if a.submitted_at else None,
-                }
-                for a in attempts
-            ]
-        }
-    finally:
-        db.close()
-
-
+        arr = db.query(ExamAttempt).filter(ExamAttempt.user_id==user_id).order_by(ExamAttempt.id.desc()).all()
+        return {"attempts":[{"id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"status":a.status,"current_index":a.current_index,"total_questions":a.total_questions,"percent_score":a.percent_score,"achieved_level":a.achieved_level,"passed":a.passed,"started_at":a.started_at.isoformat() if a.started_at else None,"submitted_at":a.submitted_at.isoformat() if a.submitted_at else None} for a in arr]}
+    finally: db.close()
 @app.post("/api/start-exam")
 @app.post("/api/exams/start")
 def start_exam(payload: StartExamRequest):
-    db = get_db()
+    db = dbs()
     try:
-        user = db.query(User).filter(User.id == payload.user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        questions = (
-            db.query(Question)
-            .filter(
-                Question.track == payload.track,
-                Question.level == payload.level,
-                Question.active == True,  # noqa: E712
-            )
-            .all()
-        )
-
-        if not questions:
-            raise HTTPException(status_code=404, detail="No questions found for the selected track and level")
-
-        questions = sorted(questions, key=lambda q: (section_sort_key(q.section), q.id))
-        selected_questions = questions[:20]
-        exam_name = generate_exam_name(payload.track, payload.level)
-
-        essay_prompts = [
-            "Explain how an enterprise should evaluate adopting generative AI for a regulated business process. Cover business value, governance, architecture, risk, delivery execution, and optionally pseudocode.",
-            "Design an AI operating model for a company trying to scale copilots and automation across multiple departments. Cover business priorities, functional workflow impact, technical controls, and optionally implementation sketches.",
-            "Propose an AI-enabled modernization approach for a legacy application estate. Cover business case, functional process change, architecture, cloud, engineering execution, and optional code examples.",
-        ]
-        scenario_prompts = [
-            "A recruiting function wants to reduce time-to-shortlist while maintaining governance and fairness. Explain how AI can support the process across business, functional, and technical dimensions.",
-            "A field service team has inconsistent resolution times and weak knowledge reuse. Design an AI-enabled solution that improves operations while keeping controls and observability in place.",
-            "A finance organization wants to automate document-heavy review while maintaining auditability. Propose an AI solution covering workflow, controls, architecture, and operational ownership.",
-        ]
-
-        attempt = ExamAttempt(
-            user_id=payload.user_id,
-            track=payload.track,
-            attempted_level=payload.level,
-            exam_name=exam_name,
-            status="mcq_in_progress",
-            current_index=0,
-            total_questions=len(selected_questions),
-            raw_score=0,
-            percent_score=0.0,
-            achieved_level=0,
-            passed=False,
-            business_score=0.0,
-            functional_score=0.0,
-            technical_score=0.0,
-            mcq_percent=0.0,
-            essay_percent=0.0,
-            scenario_percent=0.0,
-            essay_prompt=random.choice(essay_prompts),
-            scenario_prompt=random.choice(scenario_prompts),
-        )
-        db.add(attempt)
-        db.commit()
-        db.refresh(attempt)
-
-        result_questions = []
-        for q in selected_questions:
-            result_questions.append(
-                {
-                    "id": q.id,
-                    "question_code": q.question_code,
-                    "section": q.section,
-                    "question_text": q.question_text,
-                    "option_a": q.option_a,
-                    "option_b": q.option_b,
-                    "option_c": q.option_c,
-                    "option_d": q.option_d,
-                }
-            )
-
-        return {
-            "attempt_id": attempt.id,
-            "exam_name": attempt.exam_name,
-            "track": attempt.track,
-            "attempted_level": attempt.attempted_level,
-            "duration_minutes": 60,
-            "status": attempt.status,
-            "questions": result_questions,
-            "essay_prompt": attempt.essay_prompt,
-            "scenario_prompt": attempt.scenario_prompt,
-        }
-    finally:
-        db.close()
-
-
+        if not db.query(User).filter(User.id==payload.user_id).first(): raise HTTPException(status_code=404, detail="User not found")
+        qs = db.query(Question).filter(Question.track==payload.track, Question.level==payload.level, Question.active==True).all()
+        if not qs: raise HTTPException(status_code=404, detail="No questions found for the selected track and level")
+        qs = sorted(qs, key=lambda q:(section_sort_key(q.section), q.id))[:20]
+        a = ExamAttempt(user_id=payload.user_id, track=payload.track, attempted_level=payload.level, exam_name=exam_name(payload.track,payload.level), status="mcq_in_progress", current_index=0, total_questions=len(qs), essay_prompt=random.choice(["Explain how an enterprise should evaluate adopting generative AI for a regulated business process. Cover business value, governance, architecture, risk, delivery execution, and optionally pseudocode.","Design an AI operating model for a company trying to scale copilots and automation across multiple departments. Cover business priorities, functional workflow impact, technical controls, and optionally implementation sketches.","Propose an AI-enabled modernization approach for a legacy application estate. Cover business case, functional process change, architecture, cloud, engineering execution, and optional code examples."]), scenario_prompt=random.choice(["A recruiting function wants to reduce time-to-shortlist while maintaining governance and fairness. Explain how AI can support the process across business, functional, and technical dimensions.","A field service team has inconsistent resolution times and weak knowledge reuse. Design an AI-enabled solution that improves operations while keeping controls and observability in place.","A finance organization wants to automate document-heavy review while maintaining auditability. Propose an AI solution covering workflow, controls, architecture, and operational ownership."]))
+        db.add(a); db.commit(); db.refresh(a)
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"duration_minutes":60,"status":a.status,"questions":[{"id":q.id,"question_code":q.question_code,"section":q.section,"question_text":q.question_text,"option_a":q.option_a,"option_b":q.option_b,"option_c":q.option_c,"option_d":q.option_d} for q in qs],"essay_prompt":a.essay_prompt,"scenario_prompt":a.scenario_prompt}
+    finally: db.close()
 @app.post("/api/attempts/{attempt_id}/progress")
-def update_attempt_progress(attempt_id: int, current_index: int = Query(...), user_id: int = Query(...)):
-    db = get_db()
+def progress(attempt_id:int, current_index:int=Query(...), user_id:int=Query(...)):
+    db = dbs()
     try:
-        attempt = db.query(ExamAttempt).filter(ExamAttempt.id == attempt_id).first()
-        if not attempt:
-            raise HTTPException(status_code=404, detail="Attempt not found")
-
-        if attempt.user_id != user_id:
-            raise HTTPException(status_code=403, detail="Not allowed")
-
-        attempt.current_index = max(0, current_index)
-        db.commit()
-
-        return {
-            "message": "Progress updated",
-            "attempt_id": attempt.id,
-            "current_index": attempt.current_index,
-            "total_questions": attempt.total_questions,
-        }
-    finally:
-        db.close()
-
-
+        a = db.query(ExamAttempt).filter(ExamAttempt.id==attempt_id).first()
+        if not a: raise HTTPException(status_code=404, detail="Attempt not found")
+        if a.user_id != user_id: raise HTTPException(status_code=403, detail="Not allowed")
+        a.current_index = max(0,current_index); db.commit()
+        return {"message":"Progress updated","attempt_id":a.id,"current_index":a.current_index,"total_questions":a.total_questions}
+    finally: db.close()
 @app.post("/api/submit-exam")
 @app.post("/api/exams/submit")
 def submit_exam(payload: SubmitExamRequest):
-    db = get_db()
+    db = dbs()
     try:
-        attempt = db.query(ExamAttempt).filter(ExamAttempt.id == payload.attempt_id).first()
-        if not attempt:
-            raise HTTPException(status_code=404, detail="Exam attempt not found")
-
-        questions = (
-            db.query(Question)
-            .filter(
-                Question.track == attempt.track,
-                Question.level == attempt.attempted_level,
-                Question.active == True,  # noqa: E712
-            )
-            .all()
-        )
-        questions = sorted(questions, key=lambda q: (section_sort_key(q.section), q.id))[: attempt.total_questions]
-
-        if not questions:
-            raise HTTPException(status_code=404, detail="No questions found for scoring")
-
-        db.query(ExamAnswer).filter(ExamAnswer.attempt_id == attempt.id).delete()
-
-        answer_map = {int(a.question_id): a.selected_option.upper() for a in payload.answers}
-        correct_count = 0
-
-        business_total = business_correct = 0
-        functional_total = functional_correct = 0
-        technical_total = technical_correct = 0
-
-        for q in questions:
-            selected = answer_map.get(q.id, "")
-            is_correct = selected == (q.correct_option or "").upper()
-
-            if is_correct:
-                correct_count += 1
-
-            section = (q.section or "").lower()
-            if section == "business":
-                business_total += 1
-                if is_correct:
-                    business_correct += 1
-            elif section == "functional":
-                functional_total += 1
-                if is_correct:
-                    functional_correct += 1
-            elif section == "technical":
-                technical_total += 1
-                if is_correct:
-                    technical_correct += 1
-
-            db.add(
-                ExamAnswer(
-                    attempt_id=attempt.id,
-                    question_id=q.id,
-                    selected_option=selected if selected else "",
-                    is_correct=is_correct,
-                    section=q.section,
-                    score_awarded=1.0 if is_correct else 0.0,
-                )
-            )
-
-        mcq_percent = round((correct_count / len(questions)) * 100, 2) if questions else 0.0
-        business_score = round((business_correct / business_total) * 100, 2) if business_total else 0.0
-        functional_score = round((functional_correct / functional_total) * 100, 2) if functional_total else 0.0
-        technical_score = round((technical_correct / technical_total) * 100, 2) if technical_total else 0.0
-
-        essay_percent = float(payload.essay_percent or 0.0)
-        scenario_percent = float(payload.scenario_percent or 0.0)
-        final_percent = round((mcq_percent * 0.40) + (essay_percent * 0.30) + (scenario_percent * 0.30), 2)
-
-        attempted_level = attempt.attempted_level
-        if final_percent >= 90:
-            achieved_level = attempted_level
-            passed = True
-        elif final_percent >= 82:
-            achieved_level = max(1, attempted_level - 1)
-            passed = True
-        elif final_percent >= 74:
-            achieved_level = max(1, attempted_level - 2)
-            passed = True
-        elif final_percent >= 66:
-            achieved_level = max(1, attempted_level - 3)
-            passed = True
-        else:
-            achieved_level = 0
-            passed = False
-
-        attempt.raw_score = correct_count
-        attempt.mcq_percent = mcq_percent
-        attempt.essay_percent = essay_percent
-        attempt.scenario_percent = scenario_percent
-        attempt.percent_score = final_percent
-        attempt.business_score = business_score
-        attempt.functional_score = functional_score
-        attempt.technical_score = technical_score
-        attempt.achieved_level = achieved_level
-        attempt.passed = passed
-        attempt.essay_response = payload.essay_response
-        attempt.essay_feedback = payload.essay_feedback
-        attempt.scenario_response = payload.scenario_response
-        attempt.scenario_feedback = payload.scenario_feedback
-        attempt.status = "submitted"
-        attempt.submitted_at = datetime.utcnow()
-        attempt.current_index = attempt.total_questions
-
-        db.commit()
-        db.refresh(attempt)
-
-        certificate_url = None
-        if passed and achieved_level > 0:
-            certificate_code = f"AICERT-{attempt.id:06d}"
-            existing_cert = db.query(Certificate).filter(Certificate.attempt_id == attempt.id).first()
-            if not existing_cert:
-                db.add(
-                    Certificate(
-                        user_id=attempt.user_id,
-                        attempt_id=attempt.id,
-                        track=attempt.track,
-                        certified_level=achieved_level,
-                        certificate_code=certificate_code,
-                    )
-                )
-                db.commit()
-            certificate_url = f"/api/certificate/{attempt.id}"
-
-        user = db.query(User).filter(User.id == attempt.user_id).first()
-
-        result_payload = {
-            "attempt_id": attempt.id,
-            "exam_name": attempt.exam_name,
-            "candidate_name": user.full_name if user else "",
-            "candidate_email": user.email if user else "",
-            "track": attempt.track,
-            "attempted_level": attempt.attempted_level,
-            "raw_score": attempt.raw_score,
-            "mcq_percent": attempt.mcq_percent,
-            "essay_percent": attempt.essay_percent,
-            "scenario_percent": attempt.scenario_percent,
-            "percent_score": attempt.percent_score,
-            "business_score": attempt.business_score,
-            "functional_score": attempt.functional_score,
-            "technical_score": attempt.technical_score,
-            "achieved_level": attempt.achieved_level,
-            "passed": attempt.passed,
-            "essay_prompt": attempt.essay_prompt,
-            "essay_response": attempt.essay_response,
-            "essay_feedback": attempt.essay_feedback,
-            "scenario_prompt": attempt.scenario_prompt,
-            "scenario_response": attempt.scenario_response,
-            "scenario_feedback": attempt.scenario_feedback,
-            "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
-        }
-        write_result_file(result_payload)
-
-        if passed and achieved_level == attempted_level:
-            message = f"You passed Test Level {attempted_level} and earned Level {achieved_level} certification."
-        elif passed and achieved_level > 0:
-            message = f"You did not quite reach Level {attempted_level}, but you demonstrated Level {achieved_level} capability and earned Level {achieved_level} certification."
-        else:
-            message = "You did not achieve a certification level on this attempt."
-
-        return {
-            "attempt_id": attempt.id,
-            "exam_name": attempt.exam_name,
-            "track": attempt.track,
-            "attempted_level": attempt.attempted_level,
-            "raw_score": attempt.raw_score,
-            "mcq_percent": attempt.mcq_percent,
-            "essay_percent": attempt.essay_percent,
-            "scenario_percent": attempt.scenario_percent,
-            "percent_score": attempt.percent_score,
-            "business_score": attempt.business_score,
-            "functional_score": attempt.functional_score,
-            "technical_score": attempt.technical_score,
-            "achieved_level": attempt.achieved_level,
-            "passed": attempt.passed,
-            "message": message,
-            "certificate_url": certificate_url,
-        }
-    finally:
-        db.close()
-
-
-@app.get("/api/results/{attempt_id}")
-def get_results(attempt_id: int):
-    db = get_db()
+        a = db.query(ExamAttempt).filter(ExamAttempt.id==payload.attempt_id).first()
+        if not a: raise HTTPException(status_code=404, detail="Exam attempt not found")
+        qs = attempt_questions(db,a)
+        if not qs: raise HTTPException(status_code=404, detail="No questions found for scoring")
+        db.query(ExamAnswer).filter(ExamAnswer.attempt_id==a.id).delete()
+        amap = {int(x.question_id):x.selected_option.upper() for x in payload.answers}
+        correct = bt = bc = ft = fc = tt = tc = 0
+        for q in qs:
+            sel = amap.get(q.id,""); ok = sel == (q.correct_option or "").upper(); correct += 1 if ok else 0
+            sec = (q.section or "").lower()
+            if sec=="business": bt += 1; bc += 1 if ok else 0
+            elif sec=="functional": ft += 1; fc += 1 if ok else 0
+            elif sec=="technical": tt += 1; tc += 1 if ok else 0
+            db.add(ExamAnswer(attempt_id=a.id, question_id=q.id, selected_option=sel if sel else "", is_correct=ok, section=q.section, score_awarded=1.0 if ok else 0.0))
+        mcq = round((correct/len(qs))*100,2) if qs else 0.0; bus = round((bc/bt)*100,2) if bt else 0.0; fun = round((fc/ft)*100,2) if ft else 0.0; tech = round((tc/tt)*100,2) if tt else 0.0
+        essay = ai_grade("essay", a.track, a.attempted_level, a.essay_prompt or "", payload.essay_response or "")
+        scen = ai_grade("scenario", a.track, a.attempted_level, a.scenario_prompt or "", payload.scenario_response or "")
+        ep, sp = float(essay.get("percent",0.0)), float(scen.get("percent",0.0)); final = round((mcq*0.40)+(ep*0.30)+(sp*0.30),2)
+        lvl = a.attempted_level
+        if final >= 90: ach, passed = lvl, True
+        elif final >= 82: ach, passed = max(1,lvl-1), True
+        elif final >= 74: ach, passed = max(1,lvl-2), True
+        elif final >= 66: ach, passed = max(1,lvl-3), True
+        else: ach, passed = 0, False
+        a.raw_score=correct; a.mcq_percent=mcq; a.essay_percent=ep; a.scenario_percent=sp; a.percent_score=final; a.business_score=bus; a.functional_score=fun; a.technical_score=tech; a.achieved_level=ach; a.passed=passed; a.essay_response=payload.essay_response; a.essay_feedback=json.dumps(essay); a.scenario_response=payload.scenario_response; a.scenario_feedback=json.dumps(scen); a.status="submitted"; a.submitted_at=datetime.utcnow(); a.current_index=a.total_questions
+        db.commit(); db.refresh(a)
+        cert_url = None
+        if passed and ach > 0:
+            code = f"AICERT-{a.id:06d}"
+            if not db.query(Certificate).filter(Certificate.attempt_id==a.id).first(): db.add(Certificate(user_id=a.user_id, attempt_id=a.id, track=a.track, certified_level=ach, certificate_code=code)); db.commit()
+            cert_url = f"/api/certificate/{a.id}"
+        u = db.query(User).filter(User.id==a.user_id).first()
+        result_file({"attempt_id":a.id,"exam_name":a.exam_name,"candidate_name":u.full_name if u else "","candidate_email":u.email if u else "","track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"essay_prompt":a.essay_prompt,"essay_response":a.essay_response,"essay_feedback":essay,"scenario_prompt":a.scenario_prompt,"scenario_response":a.scenario_response,"scenario_feedback":scen,"submitted_at":a.submitted_at.isoformat() if a.submitted_at else None})
+        msg = f"You passed Test Level {lvl} and earned Level {ach} certification." if passed and ach==lvl else (f"You did not quite reach Level {lvl}, but you demonstrated Level {ach} capability and earned Level {ach} certification." if passed and ach>0 else "You did not achieve a certification level on this attempt.")
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"message":msg,"certificate_url":cert_url,"results_url":f"/results?attempt_id={a.id}"}
+    finally: db.close()
+@app.get("/api/attempt-review/{attempt_id}")
+def attempt_review(attempt_id:int, user_id:int=Query(...)):
+    db = dbs()
     try:
-        attempt = db.query(ExamAttempt).filter(ExamAttempt.id == attempt_id).first()
-        if not attempt:
-            raise HTTPException(status_code=404, detail="Result not found")
-
-        return {
-            "attempt_id": attempt.id,
-            "exam_name": attempt.exam_name,
-            "track": attempt.track,
-            "attempted_level": attempt.attempted_level,
-            "mcq_percent": attempt.mcq_percent,
-            "essay_percent": attempt.essay_percent,
-            "scenario_percent": attempt.scenario_percent,
-            "percent_score": attempt.percent_score,
-            "business_score": attempt.business_score,
-            "functional_score": attempt.functional_score,
-            "technical_score": attempt.technical_score,
-            "achieved_level": attempt.achieved_level,
-            "passed": attempt.passed,
-            "certificate_url": f"/api/certificate/{attempt.id}" if attempt.passed and attempt.achieved_level > 0 else None,
-        }
-    finally:
-        db.close()
-
-
+        a = db.query(ExamAttempt).filter(ExamAttempt.id==attempt_id).first()
+        if not a: raise HTTPException(status_code=404, detail="Attempt not found")
+        u = db.query(User).filter(User.id==user_id).first()
+        if not u: raise HTTPException(status_code=404, detail="User not found")
+        if a.user_id != u.id and not is_admin(u): raise HTTPException(status_code=403, detail="Not allowed")
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"percent_score":a.percent_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"essay_prompt":a.essay_prompt,"essay_response":a.essay_response,"essay_analysis":parse_json(a.essay_feedback),"scenario_prompt":a.scenario_prompt,"scenario_response":a.scenario_response,"scenario_analysis":parse_json(a.scenario_feedback),"questions":review_rows(db,a),"badge_url":f"/api/badge/{a.achieved_level}.svg" if a.achieved_level>0 else None,"certificate_url":f"/api/certificate/{a.id}" if a.passed and a.achieved_level>0 else None}
+    finally: db.close()
+@app.post("/api/retake")
+def retake(payload: RetakeRequest):
+    db = dbs()
+    try:
+        src = db.query(ExamAttempt).filter(ExamAttempt.id==payload.source_attempt_id).first()
+        if not src: raise HTTPException(status_code=404, detail="Source attempt not found")
+        if src.user_id != payload.user_id: raise HTTPException(status_code=403, detail="Not allowed")
+        req = StartExamRequest(user_id=payload.user_id, track=src.track, level=src.attempted_level)
+    finally: db.close()
+    return start_exam(req)
 @app.get("/api/admin/live")
-def admin_live(user_id: int = Query(...)):
-    db = get_db()
+def admin_live(user_id:int=Query(...)):
+    db = dbs()
     try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not is_admin_user(user):
-            raise HTTPException(status_code=403, detail="This account is not marked as admin. Add its email to AICERT_ADMIN_EMAILS and restart the app.")
-
-        attempts = db.query(ExamAttempt).order_by(ExamAttempt.id.desc()).all()
-        payload = []
-
-        for a in attempts:
-            candidate = db.query(User).filter(User.id == a.user_id).first()
-            questions = (
-                db.query(Question)
-                .filter(
-                    Question.track == a.track,
-                    Question.level == a.attempted_level,
-                    Question.active == True,  # noqa: E712
-                )
-                .all()
-            )
-            questions = sorted(questions, key=lambda q: (section_sort_key(q.section), q.id))[: a.total_questions]
-
-            payload.append(
-                {
-                    "attempt_id": a.id,
-                    "exam_name": a.exam_name,
-                    "candidate_name": candidate.full_name if candidate else "",
-                    "candidate_email": candidate.email if candidate else "",
-                    "track": a.track,
-                    "attempted_level": a.attempted_level,
-                    "status": a.status,
-                    "current_index": a.current_index,
-                    "total_questions": a.total_questions,
-                    "percent_score": a.percent_score,
-                    "achieved_level": a.achieved_level,
-                    "started_at": a.started_at.isoformat() if a.started_at else None,
-                    "submitted_at": a.submitted_at.isoformat() if a.submitted_at else None,
-                    "questions": [
-                        {
-                            "question_id": q.id,
-                            "question_code": q.question_code,
-                            "section": q.section,
-                            "question_text": q.question_text,
-                            "correct_option": q.correct_option,
-                        }
-                        for q in questions
-                    ],
-                }
-            )
-
-        return {"attempts": payload}
-    finally:
-        db.close()
-
-
+        u = db.query(User).filter(User.id==user_id).first()
+        if not u or not is_admin(u): raise HTTPException(status_code=403, detail="This account is not marked as admin. Add its email to AICERT_ADMIN_EMAILS and restart the app.")
+        arr = db.query(ExamAttempt).order_by(ExamAttempt.id.desc()).all(); payload=[]
+        for a in arr:
+            candidate = db.query(User).filter(User.id==a.user_id).first(); qs = attempt_questions(db,a)
+            payload.append({"attempt_id":a.id,"exam_name":a.exam_name,"candidate_name":candidate.full_name if candidate else "","candidate_email":candidate.email if candidate else "","track":a.track,"attempted_level":a.attempted_level,"status":a.status,"current_index":a.current_index,"total_questions":a.total_questions,"percent_score":a.percent_score,"achieved_level":a.achieved_level,"started_at":a.started_at.isoformat() if a.started_at else None,"submitted_at":a.submitted_at.isoformat() if a.submitted_at else None,"questions":[{"question_id":q.id,"question_code":q.question_code,"section":q.section,"question_text":q.question_text,"correct_option":q.correct_option} for q in qs]})
+        return {"attempts":payload}
+    finally: db.close()
 @app.post("/api/admin/retake/{attempt_id}")
-def admin_retake(attempt_id: int, user_id: int = Query(...)):
-    db = get_db()
+def admin_retake(attempt_id:int, user_id:int=Query(...)):
+    db = dbs()
     try:
-        admin_user = db.query(User).filter(User.id == user_id).first()
-        if not admin_user or not is_admin_user(admin_user):
-            raise HTTPException(status_code=403, detail="Admin access required")
-
-        attempt = db.query(ExamAttempt).filter(ExamAttempt.id == attempt_id).first()
-        if not attempt:
-            raise HTTPException(status_code=404, detail="Attempt not found")
-
-        attempt.status = "retake_requested"
-        db.commit()
-
-        return {"message": "Retake requested", "attempt_id": attempt.id}
-    finally:
-        db.close()
-
-
+        admin = db.query(User).filter(User.id==user_id).first()
+        if not admin or not is_admin(admin): raise HTTPException(status_code=403, detail="Admin access required")
+        a = db.query(ExamAttempt).filter(ExamAttempt.id==attempt_id).first()
+        if not a: raise HTTPException(status_code=404, detail="Attempt not found")
+        a.status="retake_requested"; db.commit(); return {"message":"Retake requested","attempt_id":a.id}
+    finally: db.close()
+@app.get("/api/badge/{level}.svg")
+def badge(level:int):
+    level = max(1, min(10, level)); rings=""
+    for i in range(min(5, max(2, (level+1)//2))):
+        radius = 90 - (i*14); opacity = max(0.15, 0.65 - (i*0.1)); rings += f'<circle cx="128" cy="128" r="{radius}" fill="none" stroke="#34c759" stroke-opacity="{opacity}" stroke-width="4" />'
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><defs><radialGradient id="bg" cx="50%" cy="50%" r="70%"><stop offset="0%" stop-color="#153222"/><stop offset="100%" stop-color="#07140d"/></radialGradient></defs><rect width="256" height="256" rx="36" fill="url(#bg)"/>{rings}<circle cx="128" cy="128" r="42" fill="#eaffef" fill-opacity="0.12" stroke="#9bf2ae" stroke-width="3"/><path d="M128 70 L145 112 L190 116 L156 145 L166 188 L128 166 L90 188 L100 145 L66 116 L111 112 Z" fill="#9bf2ae" fill-opacity="0.95" stroke="#34c759" stroke-width="2"/><text x="128" y="138" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="700" fill="#ffffff">{level}</text><text x="128" y="222" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#dfffe6">AICERT LEVEL</text></svg>'
+    return Response(content=svg, media_type="image/svg+xml")
 @app.get("/api/certificate/{attempt_id}", response_class=HTMLResponse)
-def certificate(attempt_id: int):
-    db = get_db()
+def certificate(attempt_id:int):
+    db = dbs()
     try:
-        attempt = db.query(ExamAttempt).filter(ExamAttempt.id == attempt_id).first()
-        if not attempt or attempt.achieved_level <= 0:
-            raise HTTPException(status_code=404, detail="Certificate not found")
-
-        user = db.query(User).filter(User.id == attempt.user_id).first()
-        cert = db.query(Certificate).filter(Certificate.attempt_id == attempt.id).first()
-
-        if not user or not cert:
-            raise HTTPException(status_code=404, detail="Certificate record not found")
-
-        html = f"""
-        <html>
-        <head>
-            <title>AICERT Certificate</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    background: #07140d;
-                    color: #ffffff;
-                    padding: 40px;
-                    margin: 0;
-                }}
-                .card {{
-                    max-width: 960px;
-                    margin: 0 auto;
-                    border: 3px solid #34c759;
-                    padding: 48px;
-                    background: #0f1e16;
-                    border-radius: 20px;
-                    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-                }}
-                .pill {{
-                    display: inline-block;
-                    padding: 8px 14px;
-                    border-radius: 999px;
-                    background: rgba(52, 199, 89, 0.14);
-                    color: #7df09a;
-                    margin-bottom: 18px;
-                    font-size: 13px;
-                }}
-                h1 {{
-                    font-size: 44px;
-                    margin-bottom: 8px;
-                }}
-                h2 {{
-                    font-size: 28px;
-                    color: #9feab1;
-                    margin-top: 0;
-                }}
-                .name {{
-                    font-size: 42px;
-                    font-weight: 700;
-                    margin: 24px 0 8px 0;
-                }}
-                .level {{
-                    font-size: 56px;
-                    font-weight: 700;
-                    margin: 24px 0;
-                }}
-                .meta {{
-                    color: #d2ead9;
-                    font-size: 18px;
-                    line-height: 1.7;
-                    margin-top: 30px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <div class="pill">AICERT by DevReady</div>
-                <h1>Certification of Achievement</h1>
-                <h2>Professional AI Capability Certification</h2>
-                <p>This certifies that</p>
-                <div class="name">{user.full_name}</div>
-                <p>has demonstrated competency in the <b>{attempt.track}</b> track and has earned</p>
-                <div class="level">Level {attempt.achieved_level}</div>
-                <div class="meta">
-                    Exam: {attempt.exam_name}<br/>
-                    Attempted Level: {attempt.attempted_level}<br/>
-                    Final Score: {attempt.percent_score}%<br/>
-                    Certificate ID: {cert.certificate_code}
-                </div>
-            </div>
-        </body>
-        </html>
-        """
+        a = db.query(ExamAttempt).filter(ExamAttempt.id==attempt_id).first()
+        if not a or a.achieved_level <= 0: raise HTTPException(status_code=404, detail="Certificate not found")
+        u = db.query(User).filter(User.id==a.user_id).first(); c = db.query(Certificate).filter(Certificate.attempt_id==a.id).first()
+        if not u or not c: raise HTTPException(status_code=404, detail="Certificate record not found")
+        badge_url = f"/api/badge/{a.achieved_level}.svg"
+        html = f"<html><head><title>AICERT Certificate</title><style>body{{font-family:Arial,sans-serif;background:#07140d;color:#fff;padding:40px;margin:0}}.card{{max-width:1040px;margin:0 auto;border:3px solid #34c759;padding:48px;background:#0f1e16;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:grid;grid-template-columns:1.3fr 0.7fr;gap:30px;align-items:center}}.pill{{display:inline-block;padding:8px 14px;border-radius:999px;background:rgba(52,199,89,0.14);color:#7df09a;margin-bottom:18px;font-size:13px}}h1{{font-size:44px;margin-bottom:8px}}h2{{font-size:28px;color:#9feab1;margin-top:0}}.name{{font-size:42px;font-weight:700;margin:24px 0 8px 0}}.level{{font-size:56px;font-weight:700;margin:24px 0}}.meta{{color:#d2ead9;font-size:18px;line-height:1.7;margin-top:30px}}.badge img{{width:240px;height:240px;display:block;margin:0 auto}}</style></head><body><div class='card'><div><div class='pill'>AICERT by DevReady</div><h1>Certification of Achievement</h1><h2>Professional AI Capability Certification</h2><p>This certifies that</p><div class='name'>{u.full_name}</div><p>has demonstrated competency in the <b>{a.track}</b> track and has earned</p><div class='level'>Level {a.achieved_level}</div><div class='meta'>Exam: {a.exam_name}<br/>Attempted Level: {a.attempted_level}<br/>Final Score: {a.percent_score}%<br/>Certificate ID: {c.certificate_code}</div></div><div class='badge'><img src='{badge_url}' alt='Level badge' /></div></div></body></html>"
         return HTMLResponse(content=html)
-    finally:
-        db.close()
+    finally: db.close()
