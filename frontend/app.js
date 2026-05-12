@@ -44,6 +44,8 @@ const resultStatus = document.getElementById("resultStatus");
 const resultMessage = document.getElementById("resultMessage");
 const certificateLink = document.getElementById("certificateLink");
 const myAttemptsSection = document.getElementById("myAttemptsSection");
+const certPathBadges = document.getElementById("certPathBadges");
+const answerKeyWrap = document.getElementById("answerKeyWrap");
 
 function showMessage(text, type = "success") {
   if (!messageBox) return;
@@ -67,6 +69,19 @@ function formatTime(value) {
 
 function updateTimerDisplay() {
   if (timerDisplay) timerDisplay.textContent = formatTime(timerSeconds);
+}
+
+function renderCertificationPath(activeLevel = 1, achievedLevel = 0) {
+  if (!certPathBadges) return;
+  certPathBadges.innerHTML = "";
+  for (let level = 1; level <= 10; level += 1) {
+    const badge = document.createElement("div");
+    badge.className = "cert-badge";
+    if (level === Number(activeLevel)) badge.classList.add("active");
+    if (achievedLevel && level <= Number(achievedLevel)) badge.classList.add("earned");
+    badge.innerHTML = `<span>Level</span><strong>${level}</strong>`;
+    certPathBadges.appendChild(badge);
+  }
 }
 
 function stopTimer() {
@@ -165,6 +180,7 @@ async function loadTracksAndLevels() {
     option.textContent = level.label;
     levelSelect.appendChild(option);
   });
+  renderCertificationPath(Number(levelSelect.value || 1), 0);
 }
 
 async function loadMyAttempts() {
@@ -257,6 +273,36 @@ function renderQuestions(questions) {
   });
 }
 
+function renderAnswerKey(answerKey = []) {
+  if (!answerKeyWrap) return;
+  if (!answerKey.length) {
+    answerKeyWrap.classList.add("hidden");
+    answerKeyWrap.innerHTML = "";
+    return;
+  }
+
+  answerKeyWrap.classList.remove("hidden");
+  answerKeyWrap.innerHTML = `
+    <div class="answer-key-header">
+      <div>
+        <div class="eyebrow">Answer key</div>
+        <h3>This test attempt</h3>
+      </div>
+      <span>${answerKey.length} questions</span>
+    </div>
+    <div class="answer-key-grid">
+      ${answerKey
+        .map(
+          (item) => `<div class="answer-key-item">
+            <span>Q${item.index} - ${item.section}</span>
+            <strong>${item.correct_option}. ${item.correct_text}</strong>
+          </div>`,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 async function startExam() {
   clearMessage();
   if (!currentUser?.id) {
@@ -272,6 +318,7 @@ async function startExam() {
     });
     currentAttemptId = payload.attempt_id;
     currentQuestions = payload.questions || [];
+    renderCertificationPath(level, 0);
     examTitle.textContent = payload.exam_name || `${payload.track} Test`;
     renderQuestions(currentQuestions);
     if (essayPromptText) essayPromptText.textContent = payload.essay_prompt || "";
@@ -365,6 +412,8 @@ async function submitExam() {
     if (resultScenario) resultScenario.textContent = `${result.scenario_percent}%`;
     resultStatus.textContent = result.passed ? "Passed" : "Not Passed";
     resultMessage.textContent = result.message;
+    renderCertificationPath(result.attempted_level, result.achieved_level);
+    renderAnswerKey(result.answer_key || []);
     if (result.certificate_url) {
       certificateLink.href = result.certificate_url;
       certificateLink.classList.remove("hidden");
@@ -393,6 +442,7 @@ registerBtn?.addEventListener("click", registerUser);
 loginBtn?.addEventListener("click", loginUser);
 startExamBtn?.addEventListener("click", startExam);
 submitExamBtn?.addEventListener("click", submitExam);
+levelSelect?.addEventListener("change", () => renderCertificationPath(Number(levelSelect.value || 1), 0));
 window.addEventListener("load", async () => {
   try {
     await loadTracksAndLevels();

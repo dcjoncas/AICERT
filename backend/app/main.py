@@ -67,9 +67,25 @@ def review_rows(db, a):
 def startup():
     db = dbs()
     try:
-        if db.query(Question).count()==0:
-            for q in build_questions(): db.add(q)
-            db.commit()
+        existing = {q.question_code: q for q in db.query(Question).all()}
+        for seeded in build_questions():
+            q = existing.get(seeded.question_code)
+            if not q:
+                db.add(seeded)
+                continue
+            q.track = seeded.track
+            q.level = seeded.level
+            q.section = seeded.section
+            q.difficulty = seeded.difficulty
+            q.weight = seeded.weight
+            q.question_text = seeded.question_text
+            q.option_a = seeded.option_a
+            q.option_b = seeded.option_b
+            q.option_c = seeded.option_c
+            q.option_d = seeded.option_d
+            q.correct_option = seeded.correct_option
+            q.active = seeded.active
+        db.commit()
     finally: db.close()
 @app.get("/", include_in_schema=False)
 def root():
@@ -174,7 +190,17 @@ def submit_exam(payload: SubmitExamRequest):
         u = db.query(User).filter(User.id==a.user_id).first()
         result_file({"attempt_id":a.id,"exam_name":a.exam_name,"candidate_name":u.full_name if u else "","candidate_email":u.email if u else "","track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"essay_prompt":a.essay_prompt,"essay_response":a.essay_response,"essay_feedback":essay,"scenario_prompt":a.scenario_prompt,"scenario_response":a.scenario_response,"scenario_feedback":scen,"submitted_at":a.submitted_at.isoformat() if a.submitted_at else None})
         msg = f"You passed Test Level {lvl} and earned Level {ach} certification." if passed and ach==lvl else (f"You did not quite reach Level {lvl}, but you demonstrated Level {ach} capability and earned Level {ach} certification." if passed and ach>0 else "You did not achieve a certification level on this attempt.")
-        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"message":msg,"certificate_url":cert_url,"results_url":f"/results?attempt_id={a.id}"}
+        answer_key = [
+            {
+                "index": idx,
+                "question_code": q.question_code,
+                "section": q.section,
+                "correct_option": q.correct_option,
+                "correct_text": getattr(q, f"option_{(q.correct_option or '').lower()}", ""),
+            }
+            for idx, q in enumerate(qs, 1)
+        ]
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"message":msg,"certificate_url":cert_url,"results_url":f"/results?attempt_id={a.id}","answer_key":answer_key}
     finally: db.close()
 @app.get("/api/attempt-review/{attempt_id}")
 def attempt_review(attempt_id:int, user_id:int=Query(...)):
