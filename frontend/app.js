@@ -1,1 +1,404 @@
-const apiBase="";let currentUser=null,currentAttemptId=null,currentQuestions=[],timerSeconds=3600,timerInterval=null;const authCard=document.getElementById("authCard"),dashboardSection=document.getElementById("dashboardSection"),examSection=document.getElementById("examSection"),resultSection=document.getElementById("resultSection"),userBadge=document.getElementById("userBadge"),messageBox=document.getElementById("messageBox"),registerBtn=document.getElementById("registerBtn"),loginBtn=document.getElementById("loginBtn"),startExamBtn=document.getElementById("startExamBtn"),submitExamBtn=document.getElementById("submitExamBtn"),trackSelect=document.getElementById("trackSelect"),levelSelect=document.getElementById("levelSelect"),questionsContainer=document.getElementById("questionsContainer"),examTitle=document.getElementById("examTitle"),timerDisplay=document.getElementById("timerDisplay"),essayPromptText=document.getElementById("essayPromptText"),scenarioPromptText=document.getElementById("scenarioPromptText"),essayResponse=document.getElementById("essayResponse"),scenarioResponse=document.getElementById("scenarioResponse"),resultTrack=document.getElementById("resultTrack"),resultAttemptedLevel=document.getElementById("resultAttemptedLevel"),resultScore=document.getElementById("resultScore"),resultAchievedLevel=document.getElementById("resultAchievedLevel"),resultMcq=document.getElementById("resultMcq"),resultEssay=document.getElementById("resultEssay"),resultScenario=document.getElementById("resultScenario"),resultStatus=document.getElementById("resultStatus"),resultMessage=document.getElementById("resultMessage"),certificateLink=document.getElementById("certificateLink"),myAttemptsSection=document.getElementById("myAttemptsSection");function showMessage(t,y="success"){messageBox&&(messageBox.textContent=t,messageBox.classList.remove("hidden","success","error"),messageBox.classList.add(y))}function clearMessage(){messageBox&&(messageBox.textContent="",messageBox.classList.add("hidden"),messageBox.classList.remove("success","error"))}function formatTime(t){const e=Math.floor(t/60),n=t%60;return`${String(e).padStart(2,"0")}:${String(n).padStart(2,"0")}`}function updateTimerDisplay(){timerDisplay&&(timerDisplay.textContent=formatTime(timerSeconds))}function stopTimer(){timerInterval&&(clearInterval(timerInterval),timerInterval=null)}function startTimer(){stopTimer(),timerSeconds=3600,updateTimerDisplay(),timerInterval=setInterval((()=>{timerSeconds-=1,updateTimerDisplay(),timerSeconds<=0&&(stopTimer(),submitExam())}),1e3)}async function apiRequest(t,e={}){const n=await fetch(`${apiBase}${t}`,{headers:{"Content-Type":"application/json",...(e.headers||{})},...e}),s=n.headers.get("content-type")||"",i=s.includes("application/json")?await n.json():await n.text();if(!n.ok){const t="object"==typeof i&&i?.detail?i.detail:"Request failed";throw new Error(t)}return i}function setCurrentUser(t){currentUser=t,localStorage.setItem("aicertUser",JSON.stringify(t)),userBadge&&(userBadge.textContent=t.full_name,userBadge.classList.remove("hidden")),authCard?.classList.add("hidden"),dashboardSection?.classList.remove("hidden"),loadMyAttempts()}function loadStoredUser(){const t=localStorage.getItem("aicertUser");if(!t)return;try{const e=JSON.parse(t);e?.id&&setCurrentUser(e)}catch{}}async function loadTracksAndLevels(){const[t,e]=await Promise.all([apiRequest("/api/tracks"),apiRequest("/api/levels")]);trackSelect.innerHTML="",levelSelect.innerHTML="",t.tracks.forEach((t=>{const e=document.createElement("option");e.value=t.id,e.textContent=t.name,trackSelect.appendChild(e)})),e.levels.forEach((t=>{const e=document.createElement("option");e.value=String(t.level),e.textContent=t.label,levelSelect.appendChild(e)}))}async function loadMyAttempts(){if(!currentUser?.id||!myAttemptsSection)return;try{const t=await apiRequest(`/api/my-attempts?user_id=${currentUser.id}`),e=t.attempts||[];if(!e.length)return void(myAttemptsSection.innerHTML="");myAttemptsSection.innerHTML=`<div class="card-header" style="margin-top:20px;"><h3>My Attempts</h3><p>Recent exam activity.</p></div><div class="attempt-list">${e.map((t=>`<div class="attempt-item"><div><strong>${t.exam_name||"Untitled Exam"}</strong></div><div>${t.track} · Level ${t.attempted_level}</div><div>Status: ${t.status}</div><div>Progress: ${t.current_index||0} / ${t.total_questions||0}</div><div>Score: ${t.percent_score??0}%</div></div>`)).join("")}</div>`}catch(t){console.error(t)}}async function registerUser(){clearMessage();const t=document.getElementById("registerName")?.value.trim(),e=document.getElementById("registerEmail")?.value.trim(),n=document.getElementById("registerPassword")?.value;if(!t||!e||!n)return void showMessage("Please complete all register fields.","error");try{const s=await apiRequest("/api/register",{method:"POST",body:JSON.stringify({full_name:t,email:e,password:n})});setCurrentUser(s.user),showMessage("Account created successfully.","success")}catch(t){showMessage(t.message,"error")}}async function loginUser(){clearMessage();const t=document.getElementById("loginEmail")?.value.trim(),e=document.getElementById("loginPassword")?.value;if(!t||!e)return void showMessage("Please enter email and password.","error");try{const n=await apiRequest("/api/login",{method:"POST",body:JSON.stringify({email:t,password:e})});setCurrentUser(n.user),showMessage("Login successful.","success")}catch(t){showMessage(t.message,"error")}}async function updateProgress(t){if(!currentAttemptId||!currentUser?.id)return;try{await apiRequest(`/api/attempts/${currentAttemptId}/progress?current_index=${t}&user_id=${currentUser.id}`,{method:"POST"})}catch(t){console.error("Progress update failed",t)}}function renderQuestions(t){if(!questionsContainer)return;if(questionsContainer.innerHTML="",!t.length)return void(questionsContainer.innerHTML='<div class="question-card"><div class="question-text">No questions returned.</div></div>');t.forEach(((t,e)=>{const n=document.createElement("div");n.className="question-card",n.innerHTML=`<div class="question-number">Question ${e+1} · ${t.section}</div><div class="question-text">${t.question_text}</div><div class="option-list"><label class="option-item"><input type="radio" name="question_${t.id}" value="A" /><span><strong>A.</strong> ${t.option_a}</span></label><label class="option-item"><input type="radio" name="question_${t.id}" value="B" /><span><strong>B.</strong> ${t.option_b}</span></label><label class="option-item"><input type="radio" name="question_${t.id}" value="C" /><span><strong>C.</strong> ${t.option_c}</span></label><label class="option-item"><input type="radio" name="question_${t.id}" value="D" /><span><strong>D.</strong> ${t.option_d}</span></label></div>`,n.querySelectorAll(`input[name="question_${t.id}"]`).forEach((t=>t.addEventListener("change",(()=>updateProgress(e+1))))),questionsContainer.appendChild(n)}))}async function startExam(){clearMessage();if(!currentUser?.id)return void showMessage("Please login first.","error");const t=trackSelect.value,e=parseInt(levelSelect.value,10);try{const n=await apiRequest("/api/start-exam",{method:"POST",body:JSON.stringify({user_id:Number(currentUser.id),track:t,level:e})});currentAttemptId=n.attempt_id,currentQuestions=n.questions||[],examTitle.textContent=n.exam_name||`${n.track} Test`,renderQuestions(currentQuestions),essayPromptText.textContent=n.essay_prompt||"",scenarioPromptText.textContent=n.scenario_prompt||"",essayResponse.value="",scenarioResponse.value="",examSection?.classList.remove("hidden"),resultSection?.classList.add("hidden"),startTimer(),examSection?.scrollIntoView({behavior:"smooth",block:"start"})}catch(t){showMessage(t.message,"error")}}function collectAnswers(){return currentQuestions.map((t=>{const e=document.querySelector(`input[name="question_${t.id}"]:checked`);return{question_id:t.id,selected_option:e?e.value:""}})).filter((t=>""!==t.selected_option))}async function submitExam(){clearMessage();if(!currentAttemptId)return void showMessage("No active exam found.","error");const t=collectAnswers(),e=essayResponse.value||"",n=scenarioResponse.value||"";if(!t.length)return void showMessage("Please answer the multiple-choice section.","error");if(!e.trim())return void showMessage("Please complete the essay response.","error");if(!n.trim())return void showMessage("Please complete the scenario response.","error");try{const s=await apiRequest("/api/submit-exam",{method:"POST",body:JSON.stringify({attempt_id:Number(currentAttemptId),answers:t,essay_response:e,scenario_response:n})});stopTimer(),resultTrack.textContent=s.track,resultAttemptedLevel.textContent=`Level ${s.attempted_level}`,resultScore.textContent=`${s.percent_score}%`,resultAchievedLevel.textContent=s.achieved_level>0?`Level ${s.achieved_level}`:"No certification",resultMcq.textContent=`${s.mcq_percent}%`,resultEssay.textContent=`${s.essay_percent}%`,resultScenario.textContent=`${s.scenario_percent}%`,resultStatus.textContent=s.passed?"Passed":"Not Passed",resultMessage.textContent=s.message,s.certificate_url?(certificateLink.href=s.certificate_url,certificateLink.classList.remove("hidden")):certificateLink.classList.add("hidden"),resultSection?.classList.remove("hidden"),loadMyAttempts(),window.open(s.results_url||`/results?attempt_id=${s.attempt_id}`,"_blank"),resultSection?.scrollIntoView({behavior:"smooth",block:"start"})}catch(t){showMessage(t.message,"error")}}window.clearAICERTState=()=>{localStorage.clear(),sessionStorage.clear(),location.reload()},registerBtn?.addEventListener("click",registerUser),loginBtn?.addEventListener("click",loginUser),startExamBtn?.addEventListener("click",startExam),submitExamBtn?.addEventListener("click",submitExam),window.addEventListener("load",(async()=>{try{await loadTracksAndLevels(),loadStoredUser()}catch(t){showMessage(`App failed to initialize: ${t.message}`,"error")}}));
+const apiBase = "";
+const launchParams = new URLSearchParams(window.location.search);
+const launchContext = {
+  profileId: launchParams.get("profileId") || "",
+  candidate: launchParams.get("candidate") || "",
+  email: launchParams.get("email") || "",
+  source: launchParams.get("source") || "",
+  returnTo: launchParams.get("returnTo") || "",
+};
+
+let currentUser = null;
+let currentAttemptId = null;
+let currentQuestions = [];
+let timerSeconds = 3600;
+let timerInterval = null;
+
+const authCard = document.getElementById("authCard");
+const dashboardSection = document.getElementById("dashboardSection");
+const examSection = document.getElementById("examSection");
+const resultSection = document.getElementById("resultSection");
+const userBadge = document.getElementById("userBadge");
+const messageBox = document.getElementById("messageBox");
+const registerBtn = document.getElementById("registerBtn");
+const loginBtn = document.getElementById("loginBtn");
+const startExamBtn = document.getElementById("startExamBtn");
+const submitExamBtn = document.getElementById("submitExamBtn");
+const trackSelect = document.getElementById("trackSelect");
+const levelSelect = document.getElementById("levelSelect");
+const questionsContainer = document.getElementById("questionsContainer");
+const examTitle = document.getElementById("examTitle");
+const timerDisplay = document.getElementById("timerDisplay");
+const essayPromptText = document.getElementById("essayPromptText");
+const scenarioPromptText = document.getElementById("scenarioPromptText");
+const essayResponse = document.getElementById("essayResponse");
+const scenarioResponse = document.getElementById("scenarioResponse");
+const resultTrack = document.getElementById("resultTrack");
+const resultAttemptedLevel = document.getElementById("resultAttemptedLevel");
+const resultScore = document.getElementById("resultScore");
+const resultAchievedLevel = document.getElementById("resultAchievedLevel");
+const resultMcq = document.getElementById("resultMcq");
+const resultEssay = document.getElementById("resultEssay");
+const resultScenario = document.getElementById("resultScenario");
+const resultStatus = document.getElementById("resultStatus");
+const resultMessage = document.getElementById("resultMessage");
+const certificateLink = document.getElementById("certificateLink");
+const myAttemptsSection = document.getElementById("myAttemptsSection");
+
+function showMessage(text, type = "success") {
+  if (!messageBox) return;
+  messageBox.textContent = text;
+  messageBox.classList.remove("hidden", "success", "error");
+  messageBox.classList.add(type);
+}
+
+function clearMessage() {
+  if (!messageBox) return;
+  messageBox.textContent = "";
+  messageBox.classList.add("hidden");
+  messageBox.classList.remove("success", "error");
+}
+
+function formatTime(value) {
+  const minutes = Math.floor(value / 60);
+  const seconds = value % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function updateTimerDisplay() {
+  if (timerDisplay) timerDisplay.textContent = formatTime(timerSeconds);
+}
+
+function stopTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = null;
+}
+
+function startTimer() {
+  stopTimer();
+  timerSeconds = 3600;
+  updateTimerDisplay();
+  timerInterval = setInterval(() => {
+    timerSeconds -= 1;
+    updateTimerDisplay();
+    if (timerSeconds <= 0) {
+      stopTimer();
+      submitExam();
+    }
+  }, 1000);
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${apiBase}${path}`, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    const message = typeof payload === "object" && payload?.detail ? payload.detail : "Request failed";
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function prefillLaunchCandidate() {
+  document.querySelectorAll(".written-section").forEach((section) => {
+    section.style.display = "none";
+  });
+  resultEssay?.closest(".metric")?.remove();
+  resultScenario?.closest(".metric")?.remove();
+
+  if (launchContext.candidate) {
+    const registerName = document.getElementById("registerName");
+    if (registerName && !registerName.value) registerName.value = launchContext.candidate;
+  }
+
+  if (launchContext.email) {
+    const registerEmail = document.getElementById("registerEmail");
+    const loginEmail = document.getElementById("loginEmail");
+    if (registerEmail && !registerEmail.value) registerEmail.value = launchContext.email;
+    if (loginEmail && !loginEmail.value) loginEmail.value = launchContext.email;
+  }
+
+  if (launchContext.profileId || launchContext.candidate || launchContext.email) {
+    showMessage("Connected from DevReady. Use this candidate account so the certification can return to the profile.", "success");
+  }
+}
+
+function setCurrentUser(user) {
+  currentUser = user;
+  localStorage.setItem("aicertUser", JSON.stringify(user));
+  if (userBadge) {
+    userBadge.textContent = user.full_name;
+    userBadge.classList.remove("hidden");
+  }
+  authCard?.classList.add("hidden");
+  dashboardSection?.classList.remove("hidden");
+  loadMyAttempts();
+}
+
+function loadStoredUser() {
+  const raw = localStorage.getItem("aicertUser");
+  if (!raw) return;
+  try {
+    const user = JSON.parse(raw);
+    if (user?.id) setCurrentUser(user);
+  } catch {
+    // ignore stale storage
+  }
+}
+
+async function loadTracksAndLevels() {
+  const [tracksPayload, levelsPayload] = await Promise.all([apiRequest("/api/tracks"), apiRequest("/api/levels")]);
+  trackSelect.innerHTML = "";
+  levelSelect.innerHTML = "";
+  tracksPayload.tracks.forEach((track) => {
+    const option = document.createElement("option");
+    option.value = track.id;
+    option.textContent = track.name;
+    trackSelect.appendChild(option);
+  });
+  levelsPayload.levels.forEach((level) => {
+    const option = document.createElement("option");
+    option.value = String(level.level);
+    option.textContent = level.label;
+    levelSelect.appendChild(option);
+  });
+}
+
+async function loadMyAttempts() {
+  if (!currentUser?.id || !myAttemptsSection) return;
+  try {
+    const payload = await apiRequest(`/api/my-attempts?user_id=${currentUser.id}`);
+    const attempts = payload.attempts || [];
+    if (!attempts.length) {
+      myAttemptsSection.innerHTML = "";
+      return;
+    }
+    myAttemptsSection.innerHTML = `<div class="card-header" style="margin-top:20px;"><h3>My Attempts</h3><p>Recent exam activity.</p></div><div class="attempt-list">${attempts
+      .map(
+        (attempt) => `<div class="attempt-item"><div><strong>${attempt.exam_name || "Untitled Exam"}</strong></div><div>${attempt.track} - Level ${attempt.attempted_level}</div><div>Status: ${attempt.status}</div><div>Progress: ${attempt.current_index || 0} / ${attempt.total_questions || 0}</div><div>Score: ${attempt.percent_score ?? 0}%</div></div>`,
+      )
+      .join("")}</div>`;
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function registerUser() {
+  clearMessage();
+  const fullName = document.getElementById("registerName")?.value.trim();
+  const email = document.getElementById("registerEmail")?.value.trim();
+  const password = document.getElementById("registerPassword")?.value;
+  if (!fullName || !email || !password) {
+    showMessage("Please complete all register fields.", "error");
+    return;
+  }
+  try {
+    const payload = await apiRequest("/api/register", {
+      method: "POST",
+      body: JSON.stringify({ full_name: fullName, email, password }),
+    });
+    setCurrentUser(payload.user);
+    showMessage("Account created successfully.", "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function loginUser() {
+  clearMessage();
+  const email = document.getElementById("loginEmail")?.value.trim();
+  const password = document.getElementById("loginPassword")?.value;
+  if (!email || !password) {
+    showMessage("Please enter email and password.", "error");
+    return;
+  }
+  try {
+    const payload = await apiRequest("/api/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    setCurrentUser(payload.user);
+    showMessage("Login successful.", "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+async function updateProgress(currentIndex) {
+  if (!currentAttemptId || !currentUser?.id) return;
+  try {
+    await apiRequest(`/api/attempts/${currentAttemptId}/progress?current_index=${currentIndex}&user_id=${currentUser.id}`, {
+      method: "POST",
+    });
+  } catch (error) {
+    console.error("Progress update failed", error);
+  }
+}
+
+function renderQuestions(questions) {
+  if (!questionsContainer) return;
+  questionsContainer.innerHTML = "";
+  if (!questions.length) {
+    questionsContainer.innerHTML = '<div class="question-card"><div class="question-text">No questions returned.</div></div>';
+    return;
+  }
+
+  questions.forEach((question, index) => {
+    const card = document.createElement("div");
+    card.className = "question-card";
+    card.innerHTML = `<div class="question-number">Question ${index + 1} - ${question.section}</div><div class="question-text">${question.question_text}</div><div class="option-list"><label class="option-item"><input type="radio" name="question_${question.id}" value="A" /><span><strong>A.</strong> ${question.option_a}</span></label><label class="option-item"><input type="radio" name="question_${question.id}" value="B" /><span><strong>B.</strong> ${question.option_b}</span></label><label class="option-item"><input type="radio" name="question_${question.id}" value="C" /><span><strong>C.</strong> ${question.option_c}</span></label><label class="option-item"><input type="radio" name="question_${question.id}" value="D" /><span><strong>D.</strong> ${question.option_d}</span></label></div>`;
+    card.querySelectorAll(`input[name="question_${question.id}"]`).forEach((input) => {
+      input.addEventListener("change", () => updateProgress(index + 1));
+    });
+    questionsContainer.appendChild(card);
+  });
+}
+
+async function startExam() {
+  clearMessage();
+  if (!currentUser?.id) {
+    showMessage("Please login first.", "error");
+    return;
+  }
+  const track = trackSelect.value;
+  const level = parseInt(levelSelect.value, 10);
+  try {
+    const payload = await apiRequest("/api/start-exam", {
+      method: "POST",
+      body: JSON.stringify({ user_id: Number(currentUser.id), track, level }),
+    });
+    currentAttemptId = payload.attempt_id;
+    currentQuestions = payload.questions || [];
+    examTitle.textContent = payload.exam_name || `${payload.track} Test`;
+    renderQuestions(currentQuestions);
+    if (essayPromptText) essayPromptText.textContent = payload.essay_prompt || "";
+    if (scenarioPromptText) scenarioPromptText.textContent = payload.scenario_prompt || "";
+    if (essayResponse) essayResponse.value = "";
+    if (scenarioResponse) scenarioResponse.value = "";
+    document.querySelectorAll(".written-section").forEach((section) => {
+      section.style.display = "none";
+    });
+    examSection?.classList.remove("hidden");
+    resultSection?.classList.add("hidden");
+    startTimer();
+    examSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+function collectAnswers() {
+  return currentQuestions
+    .map((question) => {
+      const selected = document.querySelector(`input[name="question_${question.id}"]:checked`);
+      return { question_id: question.id, selected_option: selected ? selected.value : "" };
+    })
+    .filter((answer) => answer.selected_option !== "");
+}
+
+function notifyDevReady(result) {
+  const payload = {
+    type: "ai-cert-complete",
+    profileId: launchContext.profileId,
+    candidate: launchContext.candidate || currentUser?.full_name || "",
+    email: launchContext.email || currentUser?.email || "",
+    status: result.passed ? "certified" : "completed",
+    level: result.achieved_level > 0 ? `Level ${result.achieved_level}` : "No certification",
+    score: result.percent_score ? `${result.percent_score}%` : "",
+    certificateId: result.certificate_url ? `AICERT-${String(result.attempt_id).padStart(6, "0")}` : "",
+    certificateUrl: result.certificate_url || "",
+    attemptId: result.attempt_id,
+    passed: result.passed,
+  };
+
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage(payload, "*");
+  }
+
+  if (launchContext.returnTo && result.passed) {
+    const url = new URL(launchContext.returnTo);
+    url.searchParams.set("certComplete", "1");
+    url.searchParams.set("profileId", launchContext.profileId);
+    url.searchParams.set("status", payload.status);
+    url.searchParams.set("level", payload.level);
+    url.searchParams.set("score", payload.score);
+    url.searchParams.set("certificateId", payload.certificateId);
+    setTimeout(() => {
+      window.location.href = url.toString();
+    }, 900);
+  }
+}
+
+async function submitExam() {
+  clearMessage();
+  if (!currentAttemptId) {
+    showMessage("No active exam found.", "error");
+    return;
+  }
+
+  const answers = collectAnswers();
+  if (!answers.length) {
+    showMessage("Please answer the multiple-choice section.", "error");
+    return;
+  }
+
+  try {
+    const result = await apiRequest("/api/submit-exam", {
+      method: "POST",
+      body: JSON.stringify({
+        attempt_id: Number(currentAttemptId),
+        answers,
+        essay_response: "",
+        scenario_response: "",
+      }),
+    });
+    stopTimer();
+    resultTrack.textContent = result.track;
+    resultAttemptedLevel.textContent = `Level ${result.attempted_level}`;
+    resultScore.textContent = `${result.percent_score}%`;
+    resultAchievedLevel.textContent = result.achieved_level > 0 ? `Level ${result.achieved_level}` : "No certification";
+    resultMcq.textContent = `${result.mcq_percent}%`;
+    if (resultEssay) resultEssay.textContent = `${result.essay_percent}%`;
+    if (resultScenario) resultScenario.textContent = `${result.scenario_percent}%`;
+    resultStatus.textContent = result.passed ? "Passed" : "Not Passed";
+    resultMessage.textContent = result.message;
+    if (result.certificate_url) {
+      certificateLink.href = result.certificate_url;
+      certificateLink.classList.remove("hidden");
+    } else {
+      certificateLink.classList.add("hidden");
+    }
+    resultSection?.classList.remove("hidden");
+    loadMyAttempts();
+    notifyDevReady(result);
+    if (launchContext.source !== "devready") {
+      window.open(result.results_url || `/results?attempt_id=${result.attempt_id}`, "_blank");
+    }
+    resultSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    showMessage(error.message, "error");
+  }
+}
+
+window.clearAICERTState = () => {
+  localStorage.clear();
+  sessionStorage.clear();
+  location.reload();
+};
+
+registerBtn?.addEventListener("click", registerUser);
+loginBtn?.addEventListener("click", loginUser);
+startExamBtn?.addEventListener("click", startExam);
+submitExamBtn?.addEventListener("click", submitExam);
+window.addEventListener("load", async () => {
+  try {
+    await loadTracksAndLevels();
+    prefillLaunchCandidate();
+    loadStoredUser();
+  } catch (error) {
+    showMessage(`App failed to initialize: ${error.message}`, "error");
+  }
+});

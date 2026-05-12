@@ -154,9 +154,10 @@ def submit_exam(payload: SubmitExamRequest):
             elif sec=="technical": tt += 1; tc += 1 if ok else 0
             db.add(ExamAnswer(attempt_id=a.id, question_id=q.id, selected_option=sel if sel else "", is_correct=ok, section=q.section, score_awarded=1.0 if ok else 0.0))
         mcq = round((correct/len(qs))*100,2) if qs else 0.0; bus = round((bc/bt)*100,2) if bt else 0.0; fun = round((fc/ft)*100,2) if ft else 0.0; tech = round((tc/tt)*100,2) if tt else 0.0
-        essay = ai_grade("essay", a.track, a.attempted_level, a.essay_prompt or "", payload.essay_response or "")
-        scen = ai_grade("scenario", a.track, a.attempted_level, a.scenario_prompt or "", payload.scenario_response or "")
-        ep, sp = float(essay.get("percent",0.0)), float(scen.get("percent",0.0)); final = round((mcq*0.40)+(ep*0.30)+(sp*0.30),2)
+        essay = {"percent": 0, "summary": "Essay removed. Certification is based on the 20 multiple-choice questions."}
+        scen = {"percent": 0, "summary": "Scenario removed. Certification is based on the 20 multiple-choice questions."}
+        ep, sp = 0.0, 0.0
+        final = round(mcq, 2)
         lvl = a.attempted_level
         if final >= 90: ach, passed = lvl, True
         elif final >= 82: ach, passed = max(1,lvl-1), True
