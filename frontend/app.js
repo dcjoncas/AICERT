@@ -369,6 +369,8 @@ function notifyDevReady(result) {
     const url = new URL(launchContext.returnTo);
     url.searchParams.set("certComplete", "1");
     url.searchParams.set("profileId", launchContext.profileId);
+    url.searchParams.set("candidate", payload.candidate);
+    url.searchParams.set("email", payload.email);
     url.searchParams.set("status", payload.status);
     url.searchParams.set("level", payload.level);
     url.searchParams.set("score", payload.score);
