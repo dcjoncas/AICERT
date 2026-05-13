@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from .database import Base, SessionLocal, engine
 from .models import User, Question, ExamAttempt, ExamAnswer, Certificate
 from .auth import hash_password, verify_password
-from .schemas import RegisterRequest, LoginRequest, StartExamRequest, SubmitExamRequest, RetakeRequest
+from .schemas import RegisterRequest, LoginRequest, DevReadyLaunchRequest, StartExamRequest, SubmitExamRequest, RetakeRequest
 from .seed import build_questions
 
 app = FastAPI(title="AICERT API", version="1.3.0")
@@ -115,6 +115,38 @@ def login(payload: LoginRequest):
         u = db.query(User).filter(User.email==payload.email).first()
         if not u or not verify_password(payload.password, u.password_hash): raise HTTPException(status_code=401, detail="Invalid email or password")
         return {"message":"Login successful","user":{"id":u.id,"full_name":u.full_name,"email":u.email,"is_admin":is_admin(u)}}
+    finally: db.close()
+@app.post("/api/devready-launch")
+def devready_launch(payload: DevReadyLaunchRequest):
+    db = dbs()
+    try:
+        email = str(payload.email).strip().lower()
+        name = (payload.full_name or email.split("@")[0]).strip()
+        u = db.query(User).filter(User.email==email).first()
+        created = False
+        if not u:
+            seed_password = f"devready:{email}:{payload.profile_id or ''}"
+            u = User(full_name=name, email=email, password_hash=hash_password(seed_password), is_admin=email in admin_emails())
+            db.add(u); db.commit(); db.refresh(u)
+            created = True
+        elif name and u.full_name != name:
+            u.full_name = name
+            db.commit(); db.refresh(u)
+        return {
+            "message": "DevReady launch accepted",
+            "created": created,
+            "user": {"id": u.id, "full_name": u.full_name, "email": u.email, "is_admin": is_admin(u)},
+            "exam": {
+                "profile_id": payload.profile_id or "",
+                "badge_role": payload.badge_role or "",
+                "badge_role_key": payload.badge_role_key or "",
+                "badge_level": payload.badge_level or "",
+                "badge_title": payload.badge_title or "",
+                "exam_id": payload.exam_id or "",
+                "exam_version": payload.exam_version or "",
+                "certificate_id": payload.certificate_id or "",
+            },
+        }
     finally: db.close()
 @app.get("/api/tracks")
 def tracks(): return {"tracks":[{"id":"AI Engineer","name":"AI Engineer"},{"id":"AI Solution Architect","name":"AI Solution Architect"}]}
