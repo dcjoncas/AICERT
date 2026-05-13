@@ -1,1 +1,95 @@
-const apiBase="",params=new URLSearchParams(window.location.search),attemptId=params.get("attempt_id"),scoreFinal=document.getElementById("scoreFinal"),scoreMcq=document.getElementById("scoreMcq"),scoreEssay=document.getElementById("scoreEssay"),scoreScenario=document.getElementById("scoreScenario"),scoreBusiness=document.getElementById("scoreBusiness"),scoreFunctional=document.getElementById("scoreFunctional"),scoreTechnical=document.getElementById("scoreTechnical"),scoreAchieved=document.getElementById("scoreAchieved"),scoreMessage=document.getElementById("scoreMessage"),resultsTitle=document.getElementById("resultsTitle"),resultsSubtitle=document.getElementById("resultsSubtitle"),essayAnalysisWrap=document.getElementById("essayAnalysisWrap"),scenarioAnalysisWrap=document.getElementById("scenarioAnalysisWrap"),reviewTableWrap=document.getElementById("reviewTableWrap"),badgeCard=document.getElementById("badgeCard"),badgeImage=document.getElementById("badgeImage"),certificateLink=document.getElementById("certificateLink"),retakeBtn=document.getElementById("retakeBtn");function getCurrentUser(){try{return JSON.parse(localStorage.getItem("aicertUser")||"{}")}catch{return null}}async function apiRequest(t,e={}){const n=await fetch(`${apiBase}${t}`,{headers:{"Content-Type":"application/json",...(e.headers||{})},...e}),a=n.headers.get("content-type")||"",i=a.includes("application/json")?await n.json():await n.text();if(!n.ok){const t="object"==typeof i&&i?.detail?i.detail:"Request failed";throw new Error(t)}return i}function renderAnalysisBlock(t,e,n,a){return e?`<div class="prompt-box"><h4>${t} Prompt</h4><p>${a||""}</p></div><div class="prompt-box"><h4>Candidate Response</h4><p>${(n||"").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p></div><div class="result-grid"><div class="metric"><span>Score</span><strong>${e.percent??0}%</strong></div><div class="metric"><span>Summary</span><strong>${e.summary||"—"}</strong></div><div class="metric"><span>Creativity</span><strong>${e.creativity||"—"}</strong></div><div class="metric"><span>Clarity</span><strong>${e.clarity||"—"}</strong></div></div><div class="result-message"><strong>Why:</strong><br/>${e.why||"—"}<br/><br/><strong>Business:</strong><br/>${e.business_assessment||"—"}<br/><br/><strong>Functional:</strong><br/>${e.functional_assessment||"—"}<br/><br/><strong>Technical:</strong><br/>${e.technical_assessment||"—"}<br/><br/><strong>Strengths:</strong><br/>${(e.strengths||[]).join("<br/>")}<br/><br/><strong>Weaknesses:</strong><br/>${(e.weaknesses||[]).join("<br/>")}</div>`:'<div class="result-message">No analysis available yet.</div>'}function renderReviewTable(t){reviewTableWrap.innerHTML=t?.length?`<table class="data-table"><thead><tr><th>#</th><th>Section</th><th>Question</th><th>You Chose</th><th>Correct</th><th>Status</th></tr></thead><tbody>${t.map((t=>`<tr><td>${t.index}</td><td>${t.section}</td><td>${t.question_text}</td><td><strong>${t.selected_option||"—"}</strong></td><td><strong>${t.correct_option||"—"}</strong></td><td><strong>${t.is_correct?"Correct":"Incorrect"}</strong></td></tr>`)).join("")}</tbody></table>`:'<div class="result-message">No question review available.</div>'}async function loadReview(){const t=getCurrentUser();if(!t?.id||!attemptId)return;const e=await apiRequest(`/api/attempt-review/${attemptId}?user_id=${t.id}`);resultsTitle.textContent=e.exam_name||"AICERT Results",resultsSubtitle.textContent=`${e.track} · Attempted Level ${e.attempted_level}`,scoreFinal.textContent=`${e.percent_score}%`,scoreMcq.textContent=`${e.mcq_percent}%`,scoreEssay.textContent=`${e.essay_percent}%`,scoreScenario.textContent=`${e.scenario_percent}%`,scoreBusiness.textContent=`${e.business_score}%`,scoreFunctional.textContent=`${e.functional_score}%`,scoreTechnical.textContent=`${e.technical_score}%`,scoreAchieved.textContent=e.achieved_level>0?`Level ${e.achieved_level}`:"No certification",scoreMessage.textContent=e.passed?"Certification earned or downgraded to demonstrated level.":"No certification earned on this attempt.",essayAnalysisWrap.innerHTML=renderAnalysisBlock("Essay",e.essay_analysis,e.essay_response,e.essay_prompt),scenarioAnalysisWrap.innerHTML=renderAnalysisBlock("Scenario",e.scenario_analysis,e.scenario_response,e.scenario_prompt),renderReviewTable(e.questions),e.badge_url&&(badgeCard.style.display="",badgeImage.src=e.badge_url),e.certificate_url?certificateLink.href=e.certificate_url:certificateLink.style.display="none",retakeBtn.onclick=async()=>{const n=await apiRequest("/api/retake",{method:"POST",body:JSON.stringify({user_id:t.id,source_attempt_id:Number(attemptId)})});n?.attempt_id&&(window.location.href="/")}}window.addEventListener("load",(async()=>{try{await loadReview()}catch(t){document.body.innerHTML=`<div style="padding:30px;color:white;background:#07140d;font-family:Arial;">Failed to load review: ${t.message}</div>`}}));
+const apiBase = "";
+const params = new URLSearchParams(window.location.search);
+const attemptId = params.get("attempt_id");
+
+const scoreFinal = document.getElementById("scoreFinal");
+const scoreMcq = document.getElementById("scoreMcq");
+const scoreBusiness = document.getElementById("scoreBusiness");
+const scoreFunctional = document.getElementById("scoreFunctional");
+const scoreTechnical = document.getElementById("scoreTechnical");
+const scoreAchieved = document.getElementById("scoreAchieved");
+const scoreStatus = document.getElementById("scoreStatus");
+const scoreQuestions = document.getElementById("scoreQuestions");
+const scoreMessage = document.getElementById("scoreMessage");
+const resultsTitle = document.getElementById("resultsTitle");
+const resultsSubtitle = document.getElementById("resultsSubtitle");
+const reviewTableWrap = document.getElementById("reviewTableWrap");
+const badgeCard = document.getElementById("badgeCard");
+const badgeImage = document.getElementById("badgeImage");
+const certificateLink = document.getElementById("certificateLink");
+const retakeBtn = document.getElementById("retakeBtn");
+
+function getCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem("aicertUser") || "{}");
+  } catch {
+    return null;
+  }
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(`${apiBase}${path}`, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const contentType = response.headers.get("content-type") || "";
+  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    const message = typeof payload === "object" && payload?.detail ? payload.detail : "Request failed";
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function renderReviewTable(questions) {
+  reviewTableWrap.innerHTML = questions?.length
+    ? `<table class="data-table"><thead><tr><th>#</th><th>Section</th><th>Question</th><th>You Chose</th><th>Correct</th><th>Status</th></tr></thead><tbody>${questions
+        .map(
+          (question) =>
+            `<tr><td>${question.index}</td><td>${question.section}</td><td>${question.question_text}</td><td><strong>${question.selected_option || "-"}</strong></td><td><strong>${question.correct_option || "-"}</strong></td><td><strong>${question.is_correct ? "Correct" : "Incorrect"}</strong></td></tr>`,
+        )
+        .join("")}</tbody></table>`
+    : '<div class="result-message">No question review available.</div>';
+}
+
+async function loadReview() {
+  const user = getCurrentUser();
+  if (!user?.id || !attemptId) return;
+  const review = await apiRequest(`/api/attempt-review/${attemptId}?user_id=${user.id}`);
+  resultsTitle.textContent = review.exam_name || "AICERT Results";
+  resultsSubtitle.textContent = `${review.track} - Attempted Level ${review.attempted_level}`;
+  scoreFinal.textContent = `${review.percent_score}%`;
+  scoreMcq.textContent = `${review.mcq_percent}%`;
+  scoreBusiness.textContent = `${review.business_score}%`;
+  scoreFunctional.textContent = `${review.functional_score}%`;
+  scoreTechnical.textContent = `${review.technical_score}%`;
+  scoreAchieved.textContent = review.achieved_level > 0 ? `Level ${review.achieved_level}` : "No certification";
+  scoreStatus.textContent = review.passed ? "Passed" : "Not Passed";
+  scoreQuestions.textContent = String(review.total_questions || review.questions?.length || 0);
+  scoreMessage.textContent = review.passed ? "Certification earned or downgraded to demonstrated level." : "No certification earned on this attempt.";
+  renderReviewTable(review.questions);
+  if (review.badge_url) {
+    badgeCard.style.display = "";
+    badgeImage.src = review.badge_url;
+  }
+  if (review.certificate_url) {
+    certificateLink.href = review.certificate_url;
+  } else {
+    certificateLink.style.display = "none";
+  }
+  retakeBtn.onclick = async () => {
+    const payload = await apiRequest("/api/retake", {
+      method: "POST",
+      body: JSON.stringify({ user_id: user.id, source_attempt_id: Number(attemptId) }),
+    });
+    if (payload?.attempt_id) window.location.href = "/";
+  };
+}
+
+window.addEventListener("load", async () => {
+  try {
+    await loadReview();
+  } catch (error) {
+    document.body.innerHTML = `<div style="padding:30px;color:white;background:#07140d;font-family:Arial;">Failed to load review: ${error.message}</div>`;
+  }
+});

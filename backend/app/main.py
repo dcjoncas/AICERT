@@ -292,10 +292,14 @@ def admin_retake(attempt_id:int, user_id:int=Query(...)):
     finally: db.close()
 @app.get("/api/badge/{level}.svg")
 def badge(level:int):
-    level = max(1, min(10, level)); rings=""
-    for i in range(min(5, max(2, (level+1)//2))):
-        radius = 90 - (i*14); opacity = max(0.15, 0.65 - (i*0.1)); rings += f'<circle cx="128" cy="128" r="{radius}" fill="none" stroke="#34c759" stroke-opacity="{opacity}" stroke-width="4" />'
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><defs><radialGradient id="bg" cx="50%" cy="50%" r="70%"><stop offset="0%" stop-color="#153222"/><stop offset="100%" stop-color="#07140d"/></radialGradient></defs><rect width="256" height="256" rx="36" fill="url(#bg)"/>{rings}<circle cx="128" cy="128" r="42" fill="#eaffef" fill-opacity="0.12" stroke="#9bf2ae" stroke-width="3"/><path d="M128 70 L145 112 L190 116 L156 145 L166 188 L128 166 L90 188 L100 145 L66 116 L111 112 Z" fill="#9bf2ae" fill-opacity="0.95" stroke="#34c759" stroke-width="2"/><text x="128" y="138" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" font-weight="700" fill="#ffffff">{level}</text><text x="128" y="222" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#dfffe6">AICERT LEVEL</text></svg>'
+    level = max(1, min(10, level)); ticks=""
+    for i in range(10):
+        angle = (-90 + i * 36) * pi / 180
+        x1, y1 = 128 + cos(angle) * 87, 128 + sin(angle) * 87
+        x2, y2 = 128 + cos(angle) * 108, 128 + sin(angle) * 108
+        color = "#18b45b" if i < level else "#b22a36"
+        ticks += f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{color}" stroke-width="8" stroke-linecap="round"/>'
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><defs><radialGradient id="bg" cx="50%" cy="42%" r="74%"><stop offset="0%" stop-color="#25200f"/><stop offset="52%" stop-color="#111412"/><stop offset="100%" stop-color="#070807"/></radialGradient><linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#f2d895"/><stop offset="100%" stop-color="#b98d3e"/></linearGradient></defs><rect width="256" height="256" rx="20" fill="url(#bg)"/><circle cx="128" cy="128" r="116" fill="none" stroke="#d7b56d" stroke-opacity=".36" stroke-width="2"/>{ticks}<circle cx="128" cy="128" r="68" fill="#0c0e0d" stroke="url(#gold)" stroke-width="3"/><text x="128" y="104" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#f2d895">AI</text><text x="128" y="150" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="900" fill="#ffffff">{level}</text><text x="128" y="181" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="800" fill="#d7b56d">AICERT LEVEL</text></svg>'
     return Response(content=svg, media_type="image/svg+xml")
 @app.get("/api/certificate/{attempt_id}", response_class=HTMLResponse)
 def certificate(attempt_id:int):
@@ -306,6 +310,31 @@ def certificate(attempt_id:int):
         u = db.query(User).filter(User.id==a.user_id).first(); c = db.query(Certificate).filter(Certificate.attempt_id==a.id).first()
         if not u or not c: raise HTTPException(status_code=404, detail="Certificate record not found")
         badge_url = f"/api/badge/{a.achieved_level}.svg"
-        html = f"<html><head><title>AICERT Certificate</title><style>body{{font-family:Arial,sans-serif;background:#07140d;color:#fff;padding:40px;margin:0}}.card{{max-width:1040px;margin:0 auto;border:3px solid #34c759;padding:48px;background:#0f1e16;border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:grid;grid-template-columns:1.3fr 0.7fr;gap:30px;align-items:center}}.pill{{display:inline-block;padding:8px 14px;border-radius:999px;background:rgba(52,199,89,0.14);color:#7df09a;margin-bottom:18px;font-size:13px}}h1{{font-size:44px;margin-bottom:8px}}h2{{font-size:28px;color:#9feab1;margin-top:0}}.name{{font-size:42px;font-weight:700;margin:24px 0 8px 0}}.level{{font-size:56px;font-weight:700;margin:24px 0}}.meta{{color:#d2ead9;font-size:18px;line-height:1.7;margin-top:30px}}.badge img{{width:240px;height:240px;display:block;margin:0 auto}}</style></head><body><div class='card'><div><div class='pill'>AICERT by DevReady</div><h1>Certification of Achievement</h1><h2>Professional AI Capability Certification</h2><p>This certifies that</p><div class='name'>{u.full_name}</div><p>has demonstrated competency in the <b>{a.track}</b> track and has earned</p><div class='level'>Level {a.achieved_level}</div><div class='meta'>Exam: {a.exam_name}<br/>Attempted Level: {a.attempted_level}<br/>Final Score: {a.percent_score}%<br/>Certificate ID: {c.certificate_code}</div></div><div class='badge'><img src='{badge_url}' alt='Level badge' /></div></div></body></html>"
+        candidate_name = escape(u.full_name)
+        track = escape(a.track)
+        exam = escape(a.exam_name or "AICERT Certification Exam")
+        code = escape(c.certificate_code)
+        html = f"""<html><head><title>AICERT Certificate</title><style>
+body{{font-family:Inter,Segoe UI,Arial,sans-serif;background:#080908;color:#111412;padding:36px;margin:0}}
+.wrap{{max-width:1180px;margin:0 auto}}
+.card{{position:relative;overflow:hidden;min-height:690px;border:1px solid #d7b56d;background:linear-gradient(135deg,#ffffff,#f8f4e9);box-shadow:0 32px 90px rgba(0,0,0,.42);display:grid;grid-template-columns:1.28fr .72fr;gap:32px;padding:56px}}
+.card:before{{content:"";position:absolute;inset:22px;border:1px solid rgba(17,20,18,.16);pointer-events:none}}
+.card:after{{content:"";position:absolute;right:-120px;bottom:-145px;width:420px;height:420px;border:54px solid rgba(215,181,109,.16);border-radius:50%}}
+.content,.side{{position:relative;z-index:1}}
+.topline{{display:flex;justify-content:space-between;gap:20px;color:#3f433d;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}}
+h1{{font-size:54px;line-height:1.03;margin:72px 0 10px;color:#111412}}
+h2{{font-size:22px;margin:0 0 38px;color:#576051;font-weight:800;letter-spacing:.08em;text-transform:uppercase}}
+p{{color:#5f665b;font-size:17px;line-height:1.65;margin:0}}
+.name{{margin:16px 0;color:#111412;font-family:Georgia,Times New Roman,serif;font-size:58px;line-height:1.05}}
+.track{{margin-top:14px;color:#17251d;font-size:26px;font-weight:900}}
+.level{{display:inline-flex;align-items:center;min-height:58px;margin-top:24px;padding:0 24px;background:#111412;color:#f2d895;border:1px solid #d7b56d;font-size:30px;font-weight:900}}
+.meta{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:46px;color:#384037;font-size:15px;line-height:1.55}}
+.meta div{{border-top:1px solid rgba(17,20,18,.16);padding-top:12px}}
+.meta strong{{display:block;color:#111412;font-size:12px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px}}
+.side{{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;border-left:1px solid rgba(17,20,18,.12);padding-left:30px}}
+.badge img{{width:260px;height:260px;display:block}}
+.seal{{margin-top:26px;color:#3f433d;font-size:13px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}}
+@media(max-width:820px){{body{{padding:18px}}.card{{grid-template-columns:1fr;padding:32px}}.side{{border-left:0;border-top:1px solid rgba(17,20,18,.12);padding:28px 0 0}}h1{{font-size:40px;margin-top:44px}}.name{{font-size:42px}}.meta{{grid-template-columns:1fr}}}}
+</style></head><body><div class="wrap"><div class="card"><div class="content"><div class="topline"><span>AICERT</span><span>DevReady Credentialing</span></div><h1>Certificate of Achievement</h1><h2>Professional AI Capability Certification</h2><p>This certifies that</p><div class="name">{candidate_name}</div><p>has demonstrated competency in the</p><div class="track">{track}</div><div class="level">Level {a.achieved_level}</div><div class="meta"><div><strong>Exam</strong>{exam}</div><div><strong>Attempted Level</strong>{a.attempted_level}</div><div><strong>Final Score</strong>{a.percent_score}%</div><div><strong>Certificate ID</strong>{code}</div></div></div><div class="side"><div class="badge"><img src="{badge_url}" alt="Level badge" /></div><div class="seal">Verified 10-Level AI Credential</div></div></div></div></body></html>"""
         return HTMLResponse(content=html)
     finally: db.close()

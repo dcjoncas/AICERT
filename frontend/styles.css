@@ -1,18 +1,18 @@
 :root {
-  --bg: #f4f7f5;
+  --bg: #f5f3ec;
   --panel: #ffffff;
   --panel-soft: #f8fbf8;
-  --text: #102018;
-  --muted: #587064;
-  --primary: #2f7d4b;
-  --primary-strong: #24653c;
+  --text: #111412;
+  --muted: #5e665d;
+  --primary: #111412;
+  --primary-strong: #0a0c0b;
   --lime: #7fbf3f;
   --lime-soft: #eaf6df;
-  --gold: #d6a21f;
+  --gold: #d7b56d;
   --border: #dce7df;
   --border-strong: #bdd2c2;
-  --shadow: 0 16px 42px rgba(20, 45, 31, 0.1);
-  --radius: 14px;
+  --shadow: 0 18px 48px rgba(17, 20, 18, 0.12);
+  --radius: 8px;
 }
 
 * {
@@ -85,13 +85,20 @@ body {
 
 .hero-card {
   padding: 22px;
-  border-top: 5px solid var(--primary);
+  border-top: 5px solid var(--gold);
+}
+
+.hero-showcase {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.72fr);
+  gap: 24px;
+  align-items: center;
 }
 
 .hero-copy h2 {
   margin: 6px 0 8px;
   max-width: 900px;
-  font-size: 26px;
+  font-size: 32px;
   line-height: 1.15;
 }
 
@@ -118,6 +125,107 @@ body {
   font-size: 13px;
   font-weight: 700;
   padding: 8px 11px;
+}
+
+.certificate-preview {
+  min-width: 0;
+}
+
+.certificate-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(215, 181, 109, 0.86);
+  background: linear-gradient(135deg, #ffffff, #f8f4e9);
+  color: #111412;
+  box-shadow: 0 24px 54px rgba(17, 20, 18, 0.18);
+}
+
+.certificate-frame::before {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border: 1px solid rgba(17, 20, 18, 0.15);
+  pointer-events: none;
+}
+
+.certificate-frame::after {
+  content: "";
+  position: absolute;
+  right: -70px;
+  bottom: -90px;
+  width: 230px;
+  height: 230px;
+  border: 32px solid rgba(215, 181, 109, 0.17);
+  border-radius: 50%;
+}
+
+.mini-certificate {
+  min-height: 360px;
+  padding: 24px;
+}
+
+.cert-topline,
+.cert-footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  color: #3f433d;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cert-body {
+  position: relative;
+  z-index: 1;
+  padding: 34px 8px 26px;
+  text-align: center;
+}
+
+.cert-kicker,
+.cert-copy {
+  margin: 0;
+  color: #687063;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cert-body h3 {
+  margin: 8px 0 22px;
+  color: #111412;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.cert-name {
+  margin: 10px 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 36px;
+  color: #151813;
+}
+
+.cert-track {
+  margin-top: 10px;
+  color: #17251d;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.cert-level {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  margin-top: 14px;
+  padding: 0 16px;
+  border: 1px solid rgba(215, 181, 109, 0.9);
+  background: #111412;
+  color: #f2d895;
+  font-weight: 900;
 }
 
 .card {
@@ -604,6 +712,7 @@ textarea:focus {
 
 @media (max-width: 1080px) {
   .cert-path,
+  .hero-showcase,
   .auth-grid,
   .dashboard-grid {
     grid-template-columns: 1fr;
