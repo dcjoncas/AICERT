@@ -1,6 +1,10 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
   "deploy": {
-    "startCommand": "cd backend && python run.py"
+    "startCommand": null
   }
 }
