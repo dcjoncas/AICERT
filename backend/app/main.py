@@ -1,5 +1,7 @@
 import json, os, random, urllib.request
 from datetime import datetime
+from html import escape
+from math import cos, pi, sin
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +29,7 @@ def admin_emails():
     return {x.strip().lower() for x in raw.split(",") if x.strip()}
 def is_admin(user): return bool(getattr(user, "is_admin", False) or user.email.lower() in admin_emails())
 def section_sort_key(s): return {"business":1,"functional":2,"technical":3}.get((s or "").lower(),99)
-def exam_name(track, level): return f"{random.choice(['Running','Charging','Flying','Roaring','Leaping','Storm'])} {random.choice(['Bear','Wolf','Falcon','Panther','Fox','Jaguar'])} {random.choice(['Challenge','Launch','Sprint','Quest'])} - {track} L{level}"
+def exam_name(track, level): return f"AICERT Level {level} Validation - {track}"
 def result_file(payload): (RESULTS_DIR / f"attempt_{payload.get('attempt_id','unknown')}.json").write_text(json.dumps(payload, indent=2), encoding='utf-8')
 def parse_json(v):
     if not v: return None
@@ -151,7 +153,20 @@ def devready_launch(payload: DevReadyLaunchRequest):
 @app.get("/api/tracks")
 def tracks(): return {"tracks":[{"id":"AI Engineer","name":"AI Engineer"},{"id":"AI Solution Architect","name":"AI Solution Architect"}]}
 @app.get("/api/levels")
-def levels(): return {"levels":[{"level":i,"label":f"Test Level {i}"} for i in range(1,11)]}
+def levels():
+    labels = {
+        1:"Level 1 - Foundations",
+        2:"Level 2 - Applied Basics",
+        3:"Level 3 - Practitioner",
+        4:"Level 4 - Delivery Ready",
+        5:"Level 5 - Production Builder",
+        6:"Level 6 - Advanced Operator",
+        7:"Level 7 - Lead Implementer",
+        8:"Level 8 - Enterprise Designer",
+        9:"Level 9 - Principal Strategist",
+        10:"Level 10 - Executive Architect",
+    }
+    return {"levels":[{"level":i,"label":labels[i]} for i in range(1,11)]}
 @app.get("/api/my-attempts")
 def my_attempts(user_id:int=Query(...)):
     db = dbs()
@@ -168,9 +183,9 @@ def start_exam(payload: StartExamRequest):
         qs = db.query(Question).filter(Question.track==payload.track, Question.level==payload.level, Question.active==True).all()
         if not qs: raise HTTPException(status_code=404, detail="No questions found for the selected track and level")
         qs = sorted(qs, key=lambda q:(section_sort_key(q.section), q.id))[:20]
-        a = ExamAttempt(user_id=payload.user_id, track=payload.track, attempted_level=payload.level, exam_name=exam_name(payload.track,payload.level), status="mcq_in_progress", current_index=0, total_questions=len(qs), essay_prompt=random.choice(["Explain how an enterprise should evaluate adopting generative AI for a regulated business process. Cover business value, governance, architecture, risk, delivery execution, and optionally pseudocode.","Design an AI operating model for a company trying to scale copilots and automation across multiple departments. Cover business priorities, functional workflow impact, technical controls, and optionally implementation sketches.","Propose an AI-enabled modernization approach for a legacy application estate. Cover business case, functional process change, architecture, cloud, engineering execution, and optional code examples."]), scenario_prompt=random.choice(["A recruiting function wants to reduce time-to-shortlist while maintaining governance and fairness. Explain how AI can support the process across business, functional, and technical dimensions.","A field service team has inconsistent resolution times and weak knowledge reuse. Design an AI-enabled solution that improves operations while keeping controls and observability in place.","A finance organization wants to automate document-heavy review while maintaining auditability. Propose an AI solution covering workflow, controls, architecture, and operational ownership."]))
+        a = ExamAttempt(user_id=payload.user_id, track=payload.track, attempted_level=payload.level, exam_name=exam_name(payload.track,payload.level), status="mcq_in_progress", current_index=0, total_questions=len(qs))
         db.add(a); db.commit(); db.refresh(a)
-        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"duration_minutes":60,"status":a.status,"questions":[{"id":q.id,"question_code":q.question_code,"section":q.section,"question_text":q.question_text,"option_a":q.option_a,"option_b":q.option_b,"option_c":q.option_c,"option_d":q.option_d} for q in qs],"essay_prompt":a.essay_prompt,"scenario_prompt":a.scenario_prompt}
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"duration_minutes":60,"status":a.status,"questions":[{"id":q.id,"question_code":q.question_code,"section":q.section,"question_text":q.question_text,"option_a":q.option_a,"option_b":q.option_b,"option_c":q.option_c,"option_d":q.option_d} for q in qs]}
     finally: db.close()
 @app.post("/api/attempts/{attempt_id}/progress")
 def progress(attempt_id:int, current_index:int=Query(...), user_id:int=Query(...)):
@@ -202,9 +217,6 @@ def submit_exam(payload: SubmitExamRequest):
             elif sec=="technical": tt += 1; tc += 1 if ok else 0
             db.add(ExamAnswer(attempt_id=a.id, question_id=q.id, selected_option=sel if sel else "", is_correct=ok, section=q.section, score_awarded=1.0 if ok else 0.0))
         mcq = round((correct/len(qs))*100,2) if qs else 0.0; bus = round((bc/bt)*100,2) if bt else 0.0; fun = round((fc/ft)*100,2) if ft else 0.0; tech = round((tc/tt)*100,2) if tt else 0.0
-        essay = {"percent": 0, "summary": "Essay removed. Certification is based on the 20 multiple-choice questions."}
-        scen = {"percent": 0, "summary": "Scenario removed. Certification is based on the 20 multiple-choice questions."}
-        ep, sp = 0.0, 0.0
         final = round(mcq, 2)
         lvl = a.attempted_level
         if final >= 90: ach, passed = lvl, True
@@ -212,7 +224,7 @@ def submit_exam(payload: SubmitExamRequest):
         elif final >= 74: ach, passed = max(1,lvl-2), True
         elif final >= 66: ach, passed = max(1,lvl-3), True
         else: ach, passed = 0, False
-        a.raw_score=correct; a.mcq_percent=mcq; a.essay_percent=ep; a.scenario_percent=sp; a.percent_score=final; a.business_score=bus; a.functional_score=fun; a.technical_score=tech; a.achieved_level=ach; a.passed=passed; a.essay_response=payload.essay_response; a.essay_feedback=json.dumps(essay); a.scenario_response=payload.scenario_response; a.scenario_feedback=json.dumps(scen); a.status="submitted"; a.submitted_at=datetime.utcnow(); a.current_index=a.total_questions
+        a.raw_score=correct; a.mcq_percent=mcq; a.essay_percent=0.0; a.scenario_percent=0.0; a.percent_score=final; a.business_score=bus; a.functional_score=fun; a.technical_score=tech; a.achieved_level=ach; a.passed=passed; a.essay_response=None; a.essay_feedback=None; a.scenario_response=None; a.scenario_feedback=None; a.status="submitted"; a.submitted_at=datetime.utcnow(); a.current_index=a.total_questions
         db.commit(); db.refresh(a)
         cert_url = None
         if passed and ach > 0:
@@ -220,7 +232,7 @@ def submit_exam(payload: SubmitExamRequest):
             if not db.query(Certificate).filter(Certificate.attempt_id==a.id).first(): db.add(Certificate(user_id=a.user_id, attempt_id=a.id, track=a.track, certified_level=ach, certificate_code=code)); db.commit()
             cert_url = f"/api/certificate/{a.id}"
         u = db.query(User).filter(User.id==a.user_id).first()
-        result_file({"attempt_id":a.id,"exam_name":a.exam_name,"candidate_name":u.full_name if u else "","candidate_email":u.email if u else "","track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"essay_prompt":a.essay_prompt,"essay_response":a.essay_response,"essay_feedback":essay,"scenario_prompt":a.scenario_prompt,"scenario_response":a.scenario_response,"scenario_feedback":scen,"submitted_at":a.submitted_at.isoformat() if a.submitted_at else None})
+        result_file({"attempt_id":a.id,"exam_name":a.exam_name,"candidate_name":u.full_name if u else "","candidate_email":u.email if u else "","track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"total_questions":len(qs),"mcq_percent":a.mcq_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"submitted_at":a.submitted_at.isoformat() if a.submitted_at else None})
         msg = f"You passed Test Level {lvl} and earned Level {ach} certification." if passed and ach==lvl else (f"You did not quite reach Level {lvl}, but you demonstrated Level {ach} capability and earned Level {ach} certification." if passed and ach>0 else "You did not achieve a certification level on this attempt.")
         answer_key = [
             {
@@ -232,7 +244,7 @@ def submit_exam(payload: SubmitExamRequest):
             }
             for idx, q in enumerate(qs, 1)
         ]
-        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"message":msg,"certificate_url":cert_url,"results_url":f"/results?attempt_id={a.id}","answer_key":answer_key}
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"raw_score":a.raw_score,"total_questions":len(qs),"mcq_percent":a.mcq_percent,"percent_score":a.percent_score,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"message":msg,"certificate_url":cert_url,"results_url":f"/results?attempt_id={a.id}","answer_key":answer_key}
     finally: db.close()
 @app.get("/api/attempt-review/{attempt_id}")
 def attempt_review(attempt_id:int, user_id:int=Query(...)):
@@ -243,7 +255,8 @@ def attempt_review(attempt_id:int, user_id:int=Query(...)):
         u = db.query(User).filter(User.id==user_id).first()
         if not u: raise HTTPException(status_code=404, detail="User not found")
         if a.user_id != u.id and not is_admin(u): raise HTTPException(status_code=403, detail="Not allowed")
-        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"percent_score":a.percent_score,"mcq_percent":a.mcq_percent,"essay_percent":a.essay_percent,"scenario_percent":a.scenario_percent,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"essay_prompt":a.essay_prompt,"essay_response":a.essay_response,"essay_analysis":parse_json(a.essay_feedback),"scenario_prompt":a.scenario_prompt,"scenario_response":a.scenario_response,"scenario_analysis":parse_json(a.scenario_feedback),"questions":review_rows(db,a),"badge_url":f"/api/badge/{a.achieved_level}.svg" if a.achieved_level>0 else None,"certificate_url":f"/api/certificate/{a.id}" if a.passed and a.achieved_level>0 else None}
+        rows = review_rows(db,a)
+        return {"attempt_id":a.id,"exam_name":a.exam_name,"track":a.track,"attempted_level":a.attempted_level,"percent_score":a.percent_score,"mcq_percent":a.mcq_percent,"business_score":a.business_score,"functional_score":a.functional_score,"technical_score":a.technical_score,"achieved_level":a.achieved_level,"passed":a.passed,"total_questions":len(rows),"questions":rows,"badge_url":f"/api/badge/{a.achieved_level}.svg" if a.achieved_level>0 else None,"certificate_url":f"/api/certificate/{a.id}" if a.passed and a.achieved_level>0 else None}
     finally: db.close()
 @app.post("/api/retake")
 def retake(payload: RetakeRequest):
