@@ -6,6 +6,13 @@ const launchContext = {
   email: launchParams.get("email") || "",
   source: launchParams.get("source") || "",
   returnTo: launchParams.get("returnTo") || "",
+  badgeRole: launchParams.get("badgeRole") || "",
+  badgeRoleKey: launchParams.get("badgeRoleKey") || "",
+  badgeLevel: launchParams.get("badgeLevel") || "",
+  badgeTitle: launchParams.get("badgeTitle") || "",
+  examId: launchParams.get("examId") || "",
+  examVersion: launchParams.get("examVersion") || "",
+  certificateId: launchParams.get("certificateId") || "",
 };
 
 let currentUser = null;
@@ -141,6 +148,54 @@ function prefillLaunchCandidate() {
   }
 }
 
+function selectedBadgeContext() {
+  const rawLevel = launchContext.badgeLevel || launchParams.get("level") || "";
+  const levelNumber = Number(String(rawLevel).replace(/[^\d]/g, "")) || 1;
+  const version = (
+    launchContext.examVersion ||
+    (launchContext.certificateId.match(/-v([a-c])$/i) || [])[1] ||
+    "A"
+  )
+    .toString()
+    .toUpperCase();
+  const roleKey = launchContext.badgeRoleKey || "";
+  const role = launchContext.badgeRole || launchParams.get("track") || "AI Engineer";
+  const title = launchContext.badgeTitle || `${role} L${levelNumber}`;
+  const backendTrack = roleKey.includes("architect") || roleKey.includes("solution") ? "AI Solution Architect" : "AI Engineer";
+  return {
+    role,
+    roleKey,
+    title,
+    level: Math.max(1, Math.min(10, levelNumber)),
+    version,
+    examId: launchContext.examId,
+    certificateId: launchContext.certificateId,
+    backendTrack,
+    hasSelection: Boolean(launchContext.badgeRole || launchContext.badgeLevel || launchContext.examId),
+  };
+}
+
+function selectedExamLabel() {
+  const badge = selectedBadgeContext();
+  return badge.hasSelection ? `${badge.title} - Version ${badge.version}` : "";
+}
+
+function isDevReadyLaunch() {
+  return Boolean(launchContext.source === "devready_invite" || launchContext.source === "devready" || launchContext.profileId || launchContext.examId);
+}
+
+function devReadyTargetOrigins() {
+  const origins = new Set(["http://127.0.0.1:8000", "http://localhost:8000", "https://vetcode-production.up.railway.app"]);
+  if (launchContext.returnTo) {
+    try {
+      origins.add(new URL(launchContext.returnTo).origin);
+    } catch {
+      // Keep fixed origins when returnTo is unavailable or malformed.
+    }
+  }
+  return origins;
+}
+
 function setCurrentUser(user) {
   currentUser = user;
   localStorage.setItem("aicertUser", JSON.stringify(user));
@@ -154,6 +209,7 @@ function setCurrentUser(user) {
 }
 
 function loadStoredUser() {
+  if (isDevReadyLaunch()) return;
   const raw = localStorage.getItem("aicertUser");
   if (!raw) return;
   try {
@@ -162,6 +218,42 @@ function loadStoredUser() {
   } catch {
     // ignore stale storage
   }
+}
+
+async function launchFromDevReady() {
+  if (!isDevReadyLaunch()) return false;
+  if (!launchContext.email) {
+    authCard?.classList.remove("hidden");
+    showMessage("This certification link is missing the candidate email. Ask DevReady to resend it.", "error");
+    return true;
+  }
+  const badge = selectedBadgeContext();
+  authCard?.classList.add("hidden");
+  dashboardSection?.classList.remove("hidden");
+  showMessage("DevReady certification link loaded. Preparing the assigned exam.", "success");
+  const payload = await apiRequest("/api/devready-launch", {
+    method: "POST",
+    body: JSON.stringify({
+      full_name: launchContext.candidate || launchContext.email.split("@")[0],
+      email: launchContext.email,
+      profile_id: launchContext.profileId,
+      badge_role: badge.role,
+      badge_role_key: badge.roleKey,
+      badge_level: `L${badge.level}`,
+      badge_title: badge.title,
+      exam_id: badge.examId,
+      exam_version: badge.version,
+      certificate_id: badge.certificateId,
+    }),
+  });
+  setCurrentUser(payload.user);
+  trackSelect.value = badge.backendTrack;
+  trackSelect.disabled = true;
+  levelSelect.value = String(badge.level);
+  levelSelect.disabled = true;
+  if (startExamBtn) startExamBtn.textContent = `Start ${badge.title} (${badge.examId || "assigned exam"})`;
+  renderCertificationPath(badge.level, 0);
+  return true;
 }
 
 async function loadTracksAndLevels() {
@@ -180,6 +272,14 @@ async function loadTracksAndLevels() {
     option.textContent = level.label;
     levelSelect.appendChild(option);
   });
+  const badge = selectedBadgeContext();
+  if (badge.hasSelection) {
+    trackSelect.value = badge.backendTrack;
+    levelSelect.value = String(badge.level);
+    const dashboardCopy = dashboardSection?.querySelector(".card-header p");
+    if (dashboardCopy) dashboardCopy.textContent = `Assigned exam: ${badge.title} - Version ${badge.version}.`;
+    if (startExamBtn) startExamBtn.textContent = `Start ${badge.title} (${badge.examId || "assigned exam"})`;
+  }
   renderCertificationPath(Number(levelSelect.value || 1), 0);
 }
 
@@ -319,7 +419,7 @@ async function startExam() {
     currentAttemptId = payload.attempt_id;
     currentQuestions = payload.questions || [];
     renderCertificationPath(level, 0);
-    examTitle.textContent = payload.exam_name || `${payload.track} Test`;
+    examTitle.textContent = selectedExamLabel() || payload.exam_name || `${payload.track} Test`;
     renderQuestions(currentQuestions);
     if (essayPromptText) essayPromptText.textContent = payload.essay_prompt || "";
     if (scenarioPromptText) scenarioPromptText.textContent = payload.scenario_prompt || "";
@@ -347,25 +447,33 @@ function collectAnswers() {
 }
 
 function notifyDevReady(result) {
+  const badge = selectedBadgeContext();
+  const achievedLevel = result.achieved_level > 0 ? `L${result.achieved_level}` : `L${result.attempted_level || badge.level}`;
   const payload = {
     type: "ai-cert-complete",
     profileId: launchContext.profileId,
     candidate: launchContext.candidate || currentUser?.full_name || "",
     email: launchContext.email || currentUser?.email || "",
-    status: result.passed ? "certified" : "completed",
-    level: result.achieved_level > 0 ? `Level ${result.achieved_level}` : "No certification",
+    status: result.passed ? "certified" : "failed",
+    level: achievedLevel,
     score: result.percent_score ? `${result.percent_score}%` : "",
-    certificateId: result.certificate_url ? `AICERT-${String(result.attempt_id).padStart(6, "0")}` : "",
+    certificateId: launchContext.certificateId || (result.certificate_url ? `AICERT-${String(result.attempt_id).padStart(6, "0")}` : ""),
     certificateUrl: result.certificate_url || "",
     attemptId: result.attempt_id,
     passed: result.passed,
+    title: badge.title,
+    examId: badge.examId,
+    examVersion: badge.version,
+    notes: `AICERT submitted. Attempt ${result.attempt_id}; ${result.raw_score}/${result.total_questions || currentQuestions.length} correct; achieved ${achievedLevel}.`,
   };
 
   if (window.parent && window.parent !== window) {
-    window.parent.postMessage(payload, "*");
+    for (const origin of devReadyTargetOrigins()) {
+      window.parent.postMessage(payload, origin);
+    }
   }
 
-  if (launchContext.returnTo && result.passed) {
+  if (launchContext.returnTo && window.parent === window) {
     const url = new URL(launchContext.returnTo);
     url.searchParams.set("certComplete", "1");
     url.searchParams.set("profileId", launchContext.profileId);
@@ -375,6 +483,9 @@ function notifyDevReady(result) {
     url.searchParams.set("level", payload.level);
     url.searchParams.set("score", payload.score);
     url.searchParams.set("certificateId", payload.certificateId);
+    url.searchParams.set("badgeTitle", payload.title);
+    url.searchParams.set("examId", payload.examId);
+    url.searchParams.set("examVersion", payload.examVersion);
     setTimeout(() => {
       window.location.href = url.toString();
     }, 900);
@@ -425,7 +536,7 @@ async function submitExam() {
     resultSection?.classList.remove("hidden");
     loadMyAttempts();
     notifyDevReady(result);
-    if (launchContext.source !== "devready") {
+    if (!isDevReadyLaunch()) {
       window.open(result.results_url || `/results?attempt_id=${result.attempt_id}`, "_blank");
     }
     resultSection?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -449,7 +560,8 @@ window.addEventListener("load", async () => {
   try {
     await loadTracksAndLevels();
     prefillLaunchCandidate();
-    loadStoredUser();
+    const launched = await launchFromDevReady();
+    if (!launched) loadStoredUser();
   } catch (error) {
     showMessage(`App failed to initialize: ${error.message}`, "error");
   }
