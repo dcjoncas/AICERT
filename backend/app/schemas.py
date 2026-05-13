@@ -8,9 +8,10 @@ class LoginRequest(BaseModel):
     email:EmailStr
     password:str
 class DevReadyLaunchRequest(BaseModel):
-    full_name:str
-    email:EmailStr
-    profile_id:Optional[str]=None
+    profile_id:str
+    full_name:Optional[str]=None
+    email:Optional[str]=None
+    source:Optional[str]=None
     badge_role:Optional[str]=None
     badge_role_key:Optional[str]=None
     badge_level:Optional[str]=None

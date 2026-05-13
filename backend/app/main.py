@@ -31,6 +31,21 @@ def is_admin(user): return bool(getattr(user, "is_admin", False) or user.email.l
 def section_sort_key(s): return {"business":1,"functional":2,"technical":3}.get((s or "").lower(),99)
 def exam_name(track, level): return f"AICERT Level {level} Validation - {track}"
 def result_file(payload): (RESULTS_DIR / f"attempt_{payload.get('attempt_id','unknown')}.json").write_text(json.dumps(payload, indent=2), encoding='utf-8')
+def public_user(user): return {"id":user.id,"full_name":user.full_name,"email":user.email,"is_admin":is_admin(user)}
+def devready_email(profile_id, email):
+    clean = (email or "").strip().lower()
+    if clean and "@" in clean: return clean
+    safe_profile = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(profile_id or "candidate")).strip("-") or "candidate"
+    return f"devready+{safe_profile}@devready.local"
+def devready_track(payload):
+    value = " ".join([payload.badge_role_key or "", payload.badge_role or "", payload.badge_title or ""]).lower()
+    if "architect" in value or "principal" in value: return "AI Solution Architect"
+    return "AI Engineer"
+def devready_level(payload):
+    raw = (payload.badge_level or payload.certificate_id or payload.exam_id or "").upper()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits: return 1
+    return max(1, min(10, int(digits)))
 def parse_json(v):
     if not v: return None
     try: return json.loads(v)
@@ -120,10 +135,12 @@ def login(payload: LoginRequest):
     finally: db.close()
 @app.post("/api/devready-launch")
 def devready_launch(payload: DevReadyLaunchRequest):
+    if not (payload.profile_id or "").strip():
+        raise HTTPException(status_code=400, detail="DevReady profile id is required")
     db = dbs()
     try:
-        email = str(payload.email).strip().lower()
-        name = (payload.full_name or email.split("@")[0]).strip()
+        email = devready_email(payload.profile_id, payload.email)
+        name = (payload.full_name or "").strip() or f"DevReady Candidate {payload.profile_id}"
         u = db.query(User).filter(User.email==email).first()
         created = False
         if not u:
@@ -148,6 +165,8 @@ def devready_launch(payload: DevReadyLaunchRequest):
                 "exam_version": payload.exam_version or "",
                 "certificate_id": payload.certificate_id or "",
             },
+            "track": devready_track(payload),
+            "level": devready_level(payload),
         }
     finally: db.close()
 @app.get("/api/tracks")

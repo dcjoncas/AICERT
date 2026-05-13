@@ -143,7 +143,10 @@ function prefillLaunchCandidate() {
     if (loginEmail && !loginEmail.value) loginEmail.value = launchContext.email;
   }
 
-  if (launchContext.profileId || launchContext.candidate || launchContext.email) {
+  if (isDevReadyLaunch()) {
+    authCard?.classList.add("hidden");
+    showMessage("Linked to the selected DevReady profile. The candidate can start the assigned certification without creating a separate AICERT login here.", "success");
+  } else if (launchContext.profileId || launchContext.candidate || launchContext.email) {
     showMessage("Connected from DevReady. Use this candidate account so the certification can return to the profile.", "success");
   }
 }
@@ -222,9 +225,10 @@ function loadStoredUser() {
 
 async function launchFromDevReady() {
   if (!isDevReadyLaunch()) return false;
-  if (!launchContext.email) {
-    authCard?.classList.remove("hidden");
-    showMessage("This certification link is missing the candidate email. Ask DevReady to resend it.", "error");
+  if (!launchContext.profileId) {
+    authCard?.classList.add("hidden");
+    dashboardSection?.classList.add("hidden");
+    showMessage("This certification link is missing the DevReady profile id. Return to DevReady, select the candidate, and resend the link.", "error");
     return true;
   }
   const badge = selectedBadgeContext();
@@ -234,9 +238,10 @@ async function launchFromDevReady() {
   const payload = await apiRequest("/api/devready-launch", {
     method: "POST",
     body: JSON.stringify({
-      full_name: launchContext.candidate || launchContext.email.split("@")[0],
+      full_name: launchContext.candidate || (launchContext.email ? launchContext.email.split("@")[0] : ""),
       email: launchContext.email,
       profile_id: launchContext.profileId,
+      source: launchContext.source,
       badge_role: badge.role,
       badge_role_key: badge.roleKey,
       badge_level: `L${badge.level}`,
@@ -247,12 +252,13 @@ async function launchFromDevReady() {
     }),
   });
   setCurrentUser(payload.user);
-  trackSelect.value = badge.backendTrack;
+  trackSelect.value = payload.track || badge.backendTrack;
   trackSelect.disabled = true;
-  levelSelect.value = String(badge.level);
+  levelSelect.value = String(payload.level || badge.level);
   levelSelect.disabled = true;
   if (startExamBtn) startExamBtn.textContent = `Start ${badge.title} (${badge.examId || "assigned exam"})`;
-  renderCertificationPath(badge.level, 0);
+  renderCertificationPath(Number(levelSelect.value || badge.level), 0);
+  if (badge.hasSelection) setTimeout(() => startExam(), 300);
   return true;
 }
 
